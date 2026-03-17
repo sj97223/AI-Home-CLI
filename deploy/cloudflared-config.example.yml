@@ -1,0 +1,7 @@
+tunnel: magnum-ssh-dash
+credentials-file: /Users/jisong/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: sshdash.example.com
+    service: http://127.0.0.1:3000
+  - service: http_status:404

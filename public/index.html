@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Magnum SSH Dash</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css" />
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <div class="max-w-6xl mx-auto p-4 space-y-6">
+      <section id="loginView" class="space-y-4 bg-slate-900 border border-slate-700 p-6 rounded-lg shadow-lg">
+        <h1 class="text-3xl font-semibold">Magnum SSH Dash</h1>
+        <p id="buildTag" class="text-xs text-slate-500">Version: -</p>
+        <p class="text-slate-400 text-sm">登录后使用网页 CLI，多会话窗口可切换。</p>
+        <form id="loginForm" class="space-y-3">
+          <input id="loginUsername" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="用户名" required />
+          <input id="loginPassword" type="password" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="密码" required />
+          <div class="flex justify-between items-center">
+            <small id="loginError" class="text-sm text-rose-400 hidden"></small>
+            <button type="submit" class="bg-emerald-600 px-4 py-2 rounded text-sm font-semibold">登录</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="dashboardView" class="hidden space-y-4">
+        <header class="flex justify-between items-center gap-4">
+          <div>
+            <h1 class="text-3xl font-semibold">Web CLI 多会话控制台</h1>
+            <p id="buildTagDash" class="text-xs text-slate-500">Version: -</p>
+            <p id="userTag" class="text-slate-400 text-sm"></p>
+          </div>
+          <div class="flex gap-2">
+            <button id="changeUsernameBtn" class="bg-slate-600 px-4 py-2 rounded text-sm">改用户名</button>
+            <button id="changePasswordBtn" class="bg-slate-600 px-4 py-2 rounded text-sm">改密码</button>
+            <button id="logoutButton" class="bg-slate-700 px-4 py-2 rounded text-sm">退出登录</button>
+          </div>
+        </header>
+
+        <section class="space-y-3 border border-slate-800 rounded-xl bg-slate-900 p-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold">创建会话</h2>
+            <span class="text-sm text-slate-400">支持 SSH 自动/手动进入</span>
+          </div>
+          <form id="createSessionForm" class="grid gap-3 md:grid-cols-8">
+            <label class="space-y-1 text-xs text-slate-400">
+              会话名称
+              <input id="sessionDisplayName" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="比如：My Shell" required />
+            </label>
+            <label class="space-y-1 text-xs text-slate-400">
+              工作目录
+              <select id="cwd" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded"></select>
+            </label>
+            <label class="space-y-1 text-xs text-slate-400">
+              SSH 模式
+              <select id="sshMode" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded">
+                <option value="auto">auto</option>
+                <option value="manual">manual</option>
+              </select>
+            </label>
+            <label class="space-y-1 text-xs text-slate-400">
+              Agent 预设
+              <select id="agentPreset" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded">
+                <option value="shell">shell</option>
+                <option value="claude">claude</option>
+                <option value="openclaw">openclaw</option>
+                <option value="codex">codex</option>
+                <option value="gemini">gemini</option>
+                <option value="custom">custom</option>
+              </select>
+            </label>
+            <label class="space-y-1 text-xs text-slate-400">
+              SSH 用户名
+              <input id="sshUser" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="如：jisong" />
+            </label>
+            <label class="space-y-1 text-xs text-slate-400">
+              SSH Host
+              <input id="sshHost" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" value="127.0.0.1" />
+            </label>
+            <div class="flex items-end">
+              <button type="submit" class="w-full bg-emerald-600 px-3 py-2 rounded font-semibold">创建并打开</button>
+            </div>
+            <label id="customCommandWrap" class="hidden space-y-1 text-xs text-slate-400 md:col-span-8">
+              自定义启动命令
+              <input id="customCommand" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="例如: aider --model o3-mini" />
+            </label>
+          </form>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs text-slate-400">开发快捷创建:</span>
+            <button id="quickClaude" class="bg-slate-700 px-2 py-1 rounded text-xs">Claude</button>
+            <button id="quickOpenClaude" class="bg-slate-700 px-2 py-1 rounded text-xs">OpenClaw</button>
+            <button id="quickCodex" class="bg-slate-700 px-2 py-1 rounded text-xs">Codex</button>
+            <button id="quickGemini" class="bg-slate-700 px-2 py-1 rounded text-xs">Gemini</button>
+          </div>
+        </section>
+
+        <section class="grid md:grid-cols-3 gap-3">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h2 class="font-semibold text-lg">会话列表</h2>
+              <button id="pinWindowBtn" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600" title="窗口置顶">📌</button>
+            </div>
+            <ul id="sessions" class="space-y-2 text-sm"></ul>
+          </div>
+
+          <div class="md:col-span-2 space-y-2">
+            <div class="flex items-center justify-between">
+              <h2 class="font-semibold text-lg">终端窗口</h2>
+              <div class="flex items-center gap-2">
+                <button id="fullscreenBtn" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600" title="全屏">⛶</button>
+                <button id="clearTerminalBtn" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600">清空</button>
+                <span id="terminalStatus" class="text-xs text-slate-400">未连接</span>
+              </div>
+            </div>
+            <div id="terminalTabs" class="flex gap-2 flex-wrap"></div>
+            <div id="terminal" class="h-[50vh] min-h-[260px] md:h-[460px] w-full border border-slate-700 rounded overflow-hidden"></div>
+            <form id="commandForm" class="flex gap-2">
+              <input id="commandInput" class="flex-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded text-sm" placeholder="命令输入兜底（例如: pwd）" />
+              <button type="submit" class="bg-slate-700 px-3 py-2 rounded text-sm">发送</button>
+            </form>
+          </div>
+        </section>
+
+        <details class="border border-slate-800 rounded-xl bg-slate-900 p-4">
+          <summary class="cursor-pointer select-none text-sm font-semibold text-slate-200">连接事件</summary>
+          <div class="mt-3 space-y-2">
+            <ul id="socketEvents" class="text-xs space-y-1 max-h-44 overflow-auto"></ul>
+          </div>
+        </details>
+
+        <details class="border border-slate-800 rounded-xl bg-slate-900 p-4">
+          <summary class="cursor-pointer select-none text-sm font-semibold text-slate-200">文件管理</summary>
+          <div class="grid md:grid-cols-2 gap-4 mt-4">
+            <div class="space-y-2">
+              <h3 class="text-sm font-semibold">上传文件</h3>
+              <input id="uploadPath" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="目标目录" />
+              <input id="fileInput" type="file" class="block w-full text-sm" />
+              <button id="uploadBtn" class="bg-indigo-600 px-3 py-2 rounded text-sm">上传</button>
+            </div>
+            <div class="space-y-2">
+              <h3 class="text-sm font-semibold">目录浏览</h3>
+              <input id="listPath" class="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded" placeholder="目录路径" />
+              <button id="listBtn" class="bg-slate-700 px-3 py-2 rounded text-sm">列出</button>
+              <ul id="files" class="text-sm space-y-1 max-h-48 overflow-auto"></ul>
+            </div>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script>
+      let currentUser = null;
+      let term = null;
+      let fitAddon = null;
+      let inputDisposer = null;
+      let activeSessionId = "";
+      const sessionStates = new Map();
+      let resizeListener = null;
+      let buildMeta = null;
+      let agentPresets = [];
+      const socketEventLog = [];
+      let focusBound = false;
+
+      const el = (id) => document.getElementById(id);
+
+      const api = async (path, options = {}) => {
+        const headers = { ...(options.headers || {}) };
+        const hasBody = options.body !== undefined && options.body !== null && !(options.body instanceof FormData);
+        if (hasBody && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+        const res = await fetch(path, { credentials: "include", ...options, headers, body: options.body });
+        if (!res.ok) throw new Error(await res.text());
+        if (res.status === 204) return null;
+        return res.json();
+      };
+
+      const toggleViews = () => {
+        const showDashboard = Boolean(currentUser);
+        el("loginView").classList.toggle("hidden", showDashboard);
+        el("dashboardView").classList.toggle("hidden", !showDashboard);
+        el("userTag").textContent = showDashboard ? `已登录: ${currentUser.username || currentUser.email}` : "";
+        const metaText = buildMeta
+          ? `Version: ${buildMeta.version} | Build: ${buildMeta.buildId || "-"} | Started: ${buildMeta.startedAt}`
+          : "Version: -";
+        el("buildTag").textContent = metaText;
+        el("buildTagDash").textContent = metaText;
+        if (showDashboard) {
+          ensureTerminal();
+          setTimeout(() => {
+            if (fitAddon) fitAddon.fit();
+            if (term) term.focus();
+          }, 0);
+        }
+      };
+
+      const ensureTerminal = () => {
+        if (term) return;
+        term = new Terminal({
+          cursorBlink: false,
+          convertEol: true,
+          fontSize: 14,
+          theme: {
+            background: "#020617",
+            foreground: "#e2e8f0"
+          }
+        });
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(el("terminal"));
+        el("terminal").addEventListener("mousedown", () => term && term.focus());
+        el("terminal").addEventListener("click", () => term && term.focus());
+        el("terminal").style.cursor = "text";
+        fitAddon.fit();
+        term.focus();
+      };
+
+      const loadMeta = async () => {
+        try {
+          buildMeta = await api("/api/meta");
+        } catch {
+          buildMeta = null;
+        }
+      };
+
+      const loadWorkdirOptions = async () => {
+        const data = await api("/api/options");
+        agentPresets = Array.isArray(data.agentPresets) ? data.agentPresets : [];
+        const dirs = Array.isArray(data.allowedRoots) ? data.allowedRoots : [];
+        const cwdSelect = el("cwd");
+        cwdSelect.innerHTML = "";
+        for (const dir of dirs) {
+          const opt = document.createElement("option");
+          opt.value = dir;
+          opt.textContent = dir;
+          cwdSelect.appendChild(opt);
+        }
+        const fallback = data.defaultCwd || "/Users/jisong/Documents";
+        cwdSelect.value = dirs.includes(fallback) ? fallback : (dirs[0] || fallback);
+        el("listPath").value = cwdSelect.value;
+        el("uploadPath").value = cwdSelect.value;
+        const presetSelect = el("agentPreset");
+        if (presetSelect) {
+          const selected = presetSelect.value || "shell";
+          presetSelect.innerHTML = "";
+          const source = agentPresets.length
+            ? agentPresets
+            : [
+                { id: "shell", label: "Shell" },
+                { id: "claude", label: "Claude CLI" },
+                { id: "codex", label: "Codex CLI" },
+                { id: "gemini", label: "Gemini CLI" },
+                { id: "custom", label: "Custom Command" }
+              ];
+          for (const preset of source) {
+            const opt = document.createElement("option");
+            opt.value = preset.id;
+            opt.textContent = preset.label || preset.id;
+            presetSelect.appendChild(opt);
+          }
+          presetSelect.value = source.some((x) => x.id === selected) ? selected : "shell";
+        }
+        updateCustomCommandVisibility();
+      };
+
+      const updateCustomCommandVisibility = () => {
+        const preset = el("agentPreset").value;
+        const wrap = el("customCommandWrap");
+        const show = preset === "custom";
+        wrap.classList.toggle("hidden", !show);
+        if (!show) {
+          el("customCommand").value = "";
+        }
+      };
+
+      const renderTabs = () => {
+        const wrap = el("terminalTabs");
+        wrap.innerHTML = "";
+        for (const [sessionId, state] of sessionStates.entries()) {
+          const btn = document.createElement("button");
+          btn.className = `px-3 py-1 rounded text-xs ${sessionId === activeSessionId ? "bg-emerald-700" : "bg-slate-700"}`;
+          btn.textContent = state.displayName || sessionId;
+          btn.onclick = () => openSessionTerminal(sessionId, state.displayName).catch((err) => alert(`打开失败：${err.message}`));
+          wrap.appendChild(btn);
+        }
+      };
+
+      const updateStatus = (text) => {
+        const statusEl = el("terminalStatus");
+        const modeLabel = activeSessionId && sessionStates.get(activeSessionId)?.mode === "http"
+          ? " (HTTP Fallback)"
+          : "";
+        statusEl.textContent = `${text}${modeLabel}`;
+      };
+
+      const pushSocketEvent = (text) => {
+        const stamp = new Date().toISOString().split("T")[1].replace("Z", "");
+        socketEventLog.unshift(`[${stamp}] ${text}`);
+        if (socketEventLog.length > 20) socketEventLog.length = 20;
+        const wrap = el("socketEvents");
+        if (wrap) {
+          wrap.innerHTML = "";
+          for (const line of socketEventLog) {
+            const li = document.createElement("li");
+            li.className = "text-slate-400";
+            li.textContent = line;
+            wrap.appendChild(li);
+          }
+        }
+      };
+
+      const detachActiveInput = () => {
+        if (inputDisposer) {
+          inputDisposer.dispose();
+          inputDisposer = null;
+        }
+      };
+
+      const detachResizeListener = () => {
+        if (resizeListener) {
+          window.removeEventListener("resize", resizeListener);
+          resizeListener = null;
+        }
+      };
+
+      const closeState = async (state) => {
+        if (!state) return;
+        if (state.socket) {
+          state.socket.disconnect();
+          state.socket = null;
+        }
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        if (state.keepaliveTimer) {
+          clearInterval(state.keepaliveTimer);
+          state.keepaliveTimer = null;
+        }
+        if (state.http && state.http.terminalId) {
+          try {
+            await api(`/api/sessions/${state.sessionId}/terminal/http/stop`, {
+              method: "POST",
+              body: JSON.stringify({ terminalId: state.http.terminalId })
+            });
+          } catch {}
+        }
+      };
+
+      const normalizeSeq = (value) => {
+        if (value === null || value === undefined) return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      };
+
+      const nextSeqForState = (state) => {
+        state.seq = (state.seq || 0) + 1;
+        if (!state.pendingSeqs) state.pendingSeqs = new Set();
+        state.pendingSeqs.add(state.seq);
+        return state.seq;
+      };
+
+      const consumeAckForState = (state, payload) => {
+        const ack = normalizeSeq(payload?.ack ?? payload?.seq ?? payload?.lastAck ?? payload);
+        if (ack === null) return;
+        state.lastAck = Math.max(state.lastAck || 0, ack);
+        if (state.pendingSeqs) {
+          for (const seq of Array.from(state.pendingSeqs)) {
+            if (seq <= ack) state.pendingSeqs.delete(seq);
+          }
+        }
+      };
+
+      const shouldReconnectForError = (err) => {
+        const message = String(err?.message || err || "");
+        return message.includes("terminal_not_found") || message.includes("terminal_stale");
+      };
+
+      const reconnectTerminal = async (state) => {
+        if (!state) return;
+        pushSocketEvent(`reconnect sid=${state.sessionId}`);
+        try {
+          const payload = state.http?.terminalId
+            ? { terminalId: state.http.terminalId, cols: term.cols || 120, rows: term.rows || 30 }
+            : { cols: term.cols || 120, rows: term.rows || 30 };
+          await api(`/api/sessions/${state.sessionId}/terminal/http/reconnect`, {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          pushSocketEvent("reconnect api ok");
+        } catch (err) {
+          pushSocketEvent(`reconnect api fail ${err?.message || err}`);
+        }
+        await closeState(state);
+        state.mode = "";
+        state.socket = null;
+        state.http = null;
+        state.pollTimer = null;
+        await openSessionTerminal(state.sessionId, state.displayName, { preserveBuffer: true, reason: "reconnect" });
+      };
+
+      const sendInputForState = async (state, data, allowRetry = true) => {
+        if (!state || !data) return;
+        const seq = nextSeqForState(state);
+        try {
+          if (state.mode === "ws" && state.socket && state.socket.connected) {
+            state.socket.emit("terminal:input", { data, seq });
+            return;
+          }
+          if (state.mode === "ws") {
+            throw new Error("terminal_not_found");
+          }
+          if (state.mode === "http" && state.http?.terminalId) {
+            const res = await fetch(`/api/sessions/${state.sessionId}/terminal/http/input`, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ terminalId: state.http.terminalId, data, seq })
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              throw new Error(text);
+            }
+            if (text) {
+              try {
+                consumeAckForState(state, JSON.parse(text));
+              } catch {
+                // ignore non-json body
+              }
+            }
+            return;
+          }
+          throw new Error("terminal_not_found");
+        } catch (err) {
+          if (state.pendingSeqs) state.pendingSeqs.delete(seq);
+          if (allowRetry && shouldReconnectForError(err)) {
+            await reconnectTerminal(state);
+            return sendInputForState(state, data, false);
+          }
+          throw err;
+        }
+      };
+
+      const setupInputBinding = (state) => {
+        detachActiveInput();
+        const sendInput = (data) => {
+          if (!data) return;
+          sendInputForState(state, data).catch((err) => {
+            pushSocketEvent(`input_error ${err?.message || "unknown"}`);
+          });
+        };
+        inputDisposer = term.onData((data) => sendInput(data));
+        detachResizeListener();
+        resizeListener = () => {
+          if (fitAddon) fitAddon.fit();
+          const cols = term.cols || 120;
+          const rows = term.rows || 30;
+          if (state.mode === "ws" && state.socket) {
+            state.socket.emit("terminal:resize", { c: cols, r: rows });
+          } else if (state.mode === "http" && state.http?.terminalId) {
+            fetch(`/api/sessions/${state.sessionId}/terminal/http/resize`, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ terminalId: state.http.terminalId, cols, rows })
+            }).catch(() => undefined);
+          }
+        };
+        window.addEventListener("resize", resizeListener);
+        if (fitAddon) fitAddon.fit();
+        term.focus();
+        updateStatus("已连接可输入");
+      };
+
+      const startWebSocketTerminal = async (sessionId, state) => {
+        const ticket = await api("/api/socket-ticket");
+        return await new Promise((resolve, reject) => {
+          const socket = io({
+            withCredentials: true,
+            transports: ["websocket"],
+            reconnection: false,
+            timeout: 2500,
+            auth: { ticket: ticket.ticket }
+          });
+          let done = false;
+          let ready = false;
+          let readyTimer = null;
+          const fail = (msg) => {
+            if (done) return;
+            done = true;
+            try { socket.disconnect(); } catch {}
+            reject(new Error(msg));
+          };
+          const timer = setTimeout(() => fail("websocket timeout"), 3000);
+
+          socket.on("connect", () => {
+            state.socket = socket;
+            state.mode = "ws";
+            pushSocketEvent(`connect sid=${sessionId}`);
+            readyTimer = setTimeout(() => fail("terminal ready timeout"), 1500);
+            socket.on("terminal:ready", (payload) => {
+              if (ready) return;
+              ready = true;
+              if (!done) {
+                clearTimeout(timer);
+                if (readyTimer) clearTimeout(readyTimer);
+                done = true;
+                pushSocketEvent(`ready runtime=${payload?.runtimeId || "-"}`);
+                resolve(true);
+              }
+            });
+            socket.emit("terminal:attach", { sessionId, cols: term.cols || 120, rows: term.rows || 30 });
+            socket.on("terminal:data", (data) => {
+              state.hadOutput = true;
+              pushSocketEvent(`data ${String(data || "").length}b`);
+              if (activeSessionId === sessionId) term.write(data);
+              else state.buffer += data;
+            });
+            const onAck = (payload) => {
+              consumeAckForState(state, payload);
+              const ackValue = normalizeSeq(payload?.ack ?? payload?.seq ?? payload?.lastAck ?? payload);
+              if (ackValue !== null) pushSocketEvent(`ack ${ackValue}`);
+            };
+            socket.on("terminal:ack", onAck);
+            socket.on("terminal:input_ack", onAck);
+            socket.on("terminal:error", (err) => {
+              pushSocketEvent(`error ${err}`);
+              if (String(err).includes("websocket_runtime_unavailable_use_http_fallback")) {
+                fail("websocket_runtime_unavailable");
+                return;
+              }
+              if (activeSessionId === sessionId) term.writeln(`\r\n[error] ${err}`);
+            });
+            socket.on("disconnect", () => {
+              pushSocketEvent(`disconnect sid=${sessionId}`);
+              if (activeSessionId === sessionId) updateStatus("ws 已断开");
+            });
+          });
+
+          socket.on("connect_error", (err) => {
+            clearTimeout(timer);
+            if (readyTimer) clearTimeout(readyTimer);
+            pushSocketEvent(`connect_error ${err.message || "unknown"}`);
+            fail(err.message || "websocket error");
+          });
+        });
+      };
+
+      const startHttpFallbackTerminal = async (sessionId, state) => {
+        const created = await api(`/api/sessions/${sessionId}/terminal/http/start`, {
+          method: "POST",
+          body: JSON.stringify({ cols: term.cols || 120, rows: term.rows || 30 })
+        });
+        state.mode = "http";
+        state.http = {
+          terminalId: created.terminalId,
+          cursor: created.cursor ?? created.nextCursor ?? created.startCursor ?? null
+        };
+        pushSocketEvent(`fallback http start tid=${state.http.terminalId}`);
+        state.pollTimer = setInterval(async () => {
+          try {
+            const cursorParam = state.http && state.http.cursor !== null && state.http.cursor !== undefined
+              ? `&cursor=${encodeURIComponent(state.http.cursor)}`
+              : "";
+            const polled = await api(
+              `/api/sessions/${sessionId}/terminal/http/poll?terminalId=${encodeURIComponent(state.http.terminalId)}${cursorParam}`
+            );
+            if (polled?.nextCursor !== undefined || polled?.cursor !== undefined) {
+              state.http.cursor = polled.nextCursor ?? polled.cursor ?? state.http.cursor;
+            }
+            consumeAckForState(state, polled?.ack ?? polled?.lastAck ?? polled?.seq);
+
+            const events = Array.isArray(polled.events) ? polled.events : [];
+            if (events.length) {
+              for (const event of events) {
+                if (!event) continue;
+                if (event.type === "ack" || event.kind === "ack") {
+                  consumeAckForState(state, event.ack ?? event.seq ?? event.lastAck);
+                  continue;
+                }
+                const data = event.data ?? event.chunk ?? event.output ?? "";
+                if (!data) continue;
+                const isSnapshot = event.type === "snapshot" || event.kind === "snapshot" || event.full === true;
+                state.hadOutput = true;
+                if (isSnapshot) {
+                  state.buffer = data;
+                } else {
+                  state.buffer += data;
+                }
+                if (activeSessionId === sessionId) {
+                  if (isSnapshot) {
+                    term.clear();
+                    term.write(data);
+                  } else {
+                    term.write(data);
+                  }
+                }
+              }
+            } else {
+              const chunks = Array.isArray(polled.chunks) ? polled.chunks : [];
+              if (chunks.length) {
+                state.hadOutput = true;
+                const latest = chunks[chunks.length - 1];
+                const previous = state.buffer || "";
+                const delta = latest.startsWith(previous) ? latest.slice(previous.length) : latest;
+                state.buffer = latest;
+                if (activeSessionId === sessionId) {
+                  if (latest.startsWith(previous)) term.write(delta);
+                  else {
+                    term.clear();
+                    term.write(latest);
+                  }
+                }
+              }
+            }
+            if (polled.closed) {
+              clearInterval(state.pollTimer);
+              state.pollTimer = null;
+              if (activeSessionId === sessionId) updateStatus("http 回退已关闭");
+            }
+          } catch {
+            // keep polling
+          }
+        }, 350);
+      };
+
+      const openSessionTerminal = async (sessionId, displayName = "", options = {}) => {
+        ensureTerminal();
+        activeSessionId = sessionId;
+
+        let state = sessionStates.get(sessionId);
+        if (!state) {
+          state = {
+            sessionId,
+            displayName,
+            mode: "",
+            buffer: "",
+            hadOutput: false,
+            socket: null,
+            http: null,
+            pollTimer: null,
+            keepaliveTimer: null,
+            seq: 0,
+            lastAck: 0,
+            pendingSeqs: new Set()
+          };
+          sessionStates.set(sessionId, state);
+        }
+
+        renderTabs();
+        if (!options.preserveBuffer) term.clear();
+        if (fitAddon) fitAddon.fit();
+        if (state.buffer) term.write(state.buffer);
+
+        if (!state.keepaliveTimer) {
+          state.keepaliveTimer = setInterval(() => {
+            api(`/api/sessions/${sessionId}/keepalive`, { method: "POST" }).catch(() => undefined);
+          }, 30000);
+        }
+
+        if (state.socket || state.pollTimer) {
+          setupInputBinding(state);
+          updateStatus(state.mode === "ws" ? "ws 已连接" : "http 回退已连接");
+          setTimeout(() => term && term.focus(), 100);
+          return;
+        }
+
+        updateStatus("连接中...");
+        try {
+          await startWebSocketTerminal(sessionId, state);
+          setupInputBinding(state);
+          updateStatus("ws 已连接，可输入");
+          term.focus();
+        } catch {
+          await startHttpFallbackTerminal(sessionId, state);
+          setupInputBinding(state);
+          updateStatus("ws 失败，已切换 HTTP 回退 (点击终端后输入)");
+          setTimeout(() => term && term.focus(), 500);
+        }
+        setTimeout(async () => {
+          if (!state || state.hadOutput) return;
+          try {
+            const cap = await api(`/api/sessions/${sessionId}/terminal/capture`);
+            if (cap?.output) {
+              state.hadOutput = true;
+              if (activeSessionId === sessionId) term.write(`\r\n${cap.output}\r\n`);
+              else state.buffer += `\r\n${cap.output}\r\n`;
+              pushSocketEvent("capture fallback used");
+            }
+          } catch {}
+        }, 1200);
+      };
+
+      const refreshSessions = async () => {
+        const data = await api("/api/sessions");
+        const list = el("sessions");
+        list.innerHTML = "";
+        for (const session of data.sessions) {
+          const item = document.createElement("li");
+          item.className = "p-3 border border-slate-800 rounded-md bg-slate-900 flex flex-col gap-2";
+          const isDetached = session.status === "detached" || session.restored;
+          item.innerHTML = `
+            <div class="flex items-center justify-between">
+              <span class="font-medium">${session.displayName || session.name}</span>
+              <span class="text-xs ${isDetached ? "text-amber-400" : "text-slate-500"}">${isDetached ? "⚡ 后台运行" : session.status}</span>
+            </div>
+            <div class="text-xs text-slate-400">tool: ${session.tool || "shell"}</div>
+            <div class="text-xs text-slate-400">cwd: ${session.cwd || "-"}</div>
+            <div class="text-xs text-slate-400">tmux: ${session.tmuxSession}</div>
+          `;
+          const actions = document.createElement("div");
+          actions.className = "flex flex-wrap gap-2";
+
+          // 后台按钮 - 断开终端但保持会话运行
+          const detachBtn = document.createElement("button");
+          detachBtn.className = "bg-amber-700 px-2 py-1 rounded text-xs";
+          detachBtn.textContent = "后台";
+          detachBtn.title = "断开终端连接，会话仍在后台运行";
+          detachBtn.onclick = async () => {
+            const state = sessionStates.get(session.id);
+            if (state) {
+              await closeState(state);
+              sessionStates.delete(session.id);
+              if (activeSessionId === session.id) {
+                activeSessionId = "";
+                term && term.clear();
+                updateStatus("已切换到后台运行");
+              }
+              renderTabs();
+            }
+            pushSocketEvent(`session ${session.id} detached to background`);
+          };
+
+          const openBtn = document.createElement("button");
+          openBtn.className = "bg-emerald-700 px-2 py-1 rounded text-xs";
+          openBtn.textContent = "打开终端";
+          openBtn.onclick = () => openSessionTerminal(session.id, session.displayName || session.name).catch((err) => alert(`打开失败：${err.message}`));
+
+          const rename = document.createElement("button");
+          rename.className = "bg-slate-700 px-2 py-1 rounded text-xs";
+          rename.textContent = "重命名";
+          rename.onclick = async () => {
+            const newName = prompt("输入新的会话名称", session.displayName || session.name);
+            if (!newName) return;
+            await api(`/api/sessions/${session.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ displayName: newName.trim() })
+            });
+            await refreshSessions();
+          };
+
+          const kill = document.createElement("button");
+          kill.className = "bg-rose-700 px-2 py-1 rounded text-xs";
+          kill.textContent = "关闭";
+          kill.onclick = async () => {
+            await api(`/api/sessions/${session.id}`, { method: "DELETE" });
+            const state = sessionStates.get(session.id);
+            await closeState(state);
+            sessionStates.delete(session.id);
+            if (activeSessionId === session.id) {
+              activeSessionId = "";
+              term && term.clear();
+              updateStatus("未连接");
+            }
+            renderTabs();
+            await refreshSessions();
+          };
+
+          actions.appendChild(detachBtn);
+          actions.appendChild(openBtn);
+          actions.appendChild(rename);
+          actions.appendChild(kill);
+          item.appendChild(actions);
+          list.appendChild(item);
+        }
+      };
+
+      const createSession = async (event) => {
+        event.preventDefault();
+        const displayName = el("sessionDisplayName").value.trim();
+        const cwd = el("cwd").value.trim();
+        const sshMode = el("sshMode").value;
+        const agentPreset = (el("agentPreset").value || "shell").trim();
+        const customCommand = el("customCommand").value.trim();
+        const sshUser = el("sshUser").value.trim();
+        const sshHost = el("sshHost").value.trim() || "127.0.0.1";
+        if (!displayName || !cwd) {
+          alert("请输入会话名称和工作目录。");
+          return;
+        }
+        if (agentPreset === "custom" && !customCommand) {
+          alert("custom 模式需要填写启动命令。");
+          return;
+        }
+        if (sshMode === "auto" && !sshUser) {
+          alert("auto 模式需要填写 SSH 用户名。");
+          return;
+        }
+        if (sshMode === "auto" && agentPreset !== "shell") {
+          alert("提示：auto SSH 会优先启动 ssh 登录。Agent 命令请在登录后手动输入，或切换到 manual。");
+        }
+        const tool = ["shell", "claude", "codex", "gemini"].includes(agentPreset)
+          ? agentPreset
+          : "shell";
+        const startupCommand = agentPreset === "custom" ? customCommand : undefined;
+        const created = await api("/api/sessions", {
+          method: "POST",
+          body: JSON.stringify({ displayName, cwd, sshMode, sshUser, sshHost, tool, startupCommand })
+        });
+        el("createSessionForm").reset();
+        el("sshHost").value = "127.0.0.1";
+        el("agentPreset").value = "shell";
+        updateCustomCommandVisibility();
+        await loadWorkdirOptions();
+        await refreshSessions();
+        if (created?.id) {
+          await openSessionTerminal(created.id, created.displayName || created.name);
+        }
+      };
+
+      const quickCreateAgent = async (preset) => {
+        const cwd = el("cwd").value.trim();
+        const label = preset.charAt(0).toUpperCase() + preset.slice(1);
+        const created = await api("/api/sessions", {
+          method: "POST",
+          body: JSON.stringify({
+            displayName: `${label} Dev`,
+            cwd,
+            sshMode: "manual",
+            tool: preset
+          })
+        });
+        await refreshSessions();
+        if (created?.id) {
+          await openSessionTerminal(created.id, created.displayName || created.name);
+        }
+      };
+
+      const uploadFile = async () => {
+        const path = el("uploadPath").value.trim() || ".";
+        const file = el("fileInput").files[0];
+        if (!file) return;
+        const form = new FormData();
+        form.append("path", path);
+        form.append("file", file);
+        const res = await fetch("/api/files/upload", { method: "POST", credentials: "include", body: form });
+        if (!res.ok) throw new Error(await res.text());
+        alert("上传完成");
+      };
+
+      const listFiles = async () => {
+        const dir = el("listPath").value.trim() || ".";
+        const data = await api(`/api/files/list?path=${encodeURIComponent(dir)}`);
+        const ul = el("files");
+        ul.innerHTML = "";
+        for (const entry of data.entries) {
+          const li = document.createElement("li");
+          if (entry.type === "file") {
+            const a = document.createElement("a");
+            a.href = `/api/files/download?path=${encodeURIComponent(data.path + "/" + entry.name)}`;
+            a.textContent = entry.name;
+            a.className = "text-blue-400 underline text-xs";
+            a.target = "_blank";
+            li.appendChild(a);
+          } else {
+            li.textContent = `[dir] ${entry.name}`;
+          }
+          li.className = "text-xs text-slate-300";
+          ul.appendChild(li);
+        }
+      };
+
+      const hydrateUser = async () => {
+        try {
+          currentUser = await api("/api/me");
+        } catch {
+          currentUser = null;
+        }
+        toggleViews();
+        if (currentUser) {
+          await loadWorkdirOptions();
+          await refreshSessions();
+          await listFiles();
+        }
+      };
+
+      const handleLogin = async (event) => {
+        event.preventDefault();
+        const username = el("loginUsername").value.trim();
+        const password = el("loginPassword").value;
+        await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
+        el("loginError").classList.add("hidden");
+        el("loginPassword").value = "";
+        await hydrateUser();
+      };
+
+      const handleLogout = async () => {
+        await api("/api/logout", { method: "POST" });
+        for (const state of sessionStates.values()) {
+          await closeState(state);
+        }
+        sessionStates.clear();
+        activeSessionId = "";
+        detachActiveInput();
+        detachResizeListener();
+        term && term.clear();
+        currentUser = null;
+        socketEventLog.length = 0;
+        const eventsWrap = el("socketEvents");
+        if (eventsWrap) eventsWrap.innerHTML = "";
+        renderTabs();
+        updateStatus("未连接");
+        toggleViews();
+      };
+
+      el("loginForm").addEventListener("submit", (e) => handleLogin(e).catch((err) => {
+        el("loginError").textContent = `登录失败：${err.message}`;
+        el("loginError").classList.remove("hidden");
+      }));
+      el("createSessionForm").addEventListener("submit", (e) => createSession(e).catch((err) => alert(`创建失败：${err.message}`)));
+      el("uploadBtn").addEventListener("click", () => uploadFile().catch((err) => alert(`上传失败：${err.message}`)));
+      el("listBtn").addEventListener("click", () => listFiles().catch((err) => alert(`列出失败：${err.message}`)));
+      el("logoutButton").addEventListener("click", () => handleLogout().catch((err) => alert(`退出失败：${err.message}`)));
+
+      // 修改用户名
+      el("changeUsernameBtn").addEventListener("click", async () => {
+        const newUsername = prompt("请输入新用户名：");
+        if (!newUsername || newUsername.length < 1) {
+          alert("用户名不能为空");
+          return;
+        }
+        try {
+          await api("/api/admin/change-username", {
+            method: "POST",
+            body: JSON.stringify({ newUsername })
+          });
+          alert("用户名修改成功！请重新登录。");
+          handleLogout();
+        } catch (err) {
+          alert(`修改失败：${err.message}`);
+        }
+      });
+
+      // 修改密码
+      el("changePasswordBtn").addEventListener("click", async () => {
+        const newPassword = prompt("请输入新密码：");
+        if (!newPassword || newPassword.length < 4) {
+          alert("密码至少需要4个字符");
+          return;
+        }
+        const confirmPassword = prompt("请再次输入新密码：");
+        if (newPassword !== confirmPassword) {
+          alert("两次输入的密码不一致");
+          return;
+        }
+        try {
+          await api("/api/admin/change-password", {
+            method: "POST",
+            body: JSON.stringify({ newPassword })
+          });
+          alert("密码修改成功！请重新登录。");
+          handleLogout();
+        } catch (err) {
+          alert(`修改失败：${err.message}`);
+        }
+      });
+
+      el("commandForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (!activeSessionId) {
+          alert("请先打开一个会话终端");
+          return;
+        }
+        const state = sessionStates.get(activeSessionId);
+        const command = el("commandInput").value;
+        if (!command.trim()) return;
+        sendInputForState(state, `${command}\n`)
+          .then(() => {
+            el("commandInput").value = "";
+          })
+          .catch((err) => {
+            pushSocketEvent(`input_error ${err?.message || "unknown"}`);
+            alert(`发送失败：${err.message || err}`);
+          });
+      });
+      el("agentPreset").addEventListener("change", () => updateCustomCommandVisibility());
+      el("quickClaude").addEventListener("click", () => quickCreateAgent("claude").catch((err) => alert(`创建失败：${err.message}`)));
+      el("quickOpenClaude").addEventListener("click", () => quickCreateAgent("openclaw").catch((err) => alert(`创建失败：${err.message}`)));
+      el("quickCodex").addEventListener("click", () => quickCreateAgent("codex").catch((err) => alert(`创建失败：${err.message}`)));
+      el("quickGemini").addEventListener("click", () => quickCreateAgent("gemini").catch((err) => alert(`创建失败：${err.message}`)));
+      el("clearTerminalBtn").addEventListener("click", () => {
+        if (term) {
+          term.clear();
+          pushSocketEvent("terminal cleared");
+        }
+      });
+
+      // 全屏按钮
+      el("fullscreenBtn").addEventListener("click", () => {
+        const terminalEl = el("terminal");
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          terminalEl.requestFullscreen();
+        }
+      });
+
+      // 窗口置顶按钮
+      let isPinned = false;
+      el("pinWindowBtn").addEventListener("click", () => {
+        isPinned = !isPinned;
+        el("pinWindowBtn").classList.toggle("bg-emerald-700", isPinned);
+        el("pinWindowBtn").classList.toggle("bg-slate-700", !isPinned);
+        pushSocketEvent(isPinned ? "window pinned (always on top)" : "window unpinned");
+        // 提示：浏览器不支持 JS 控制窗口置顶，这是操作系统层面的功能
+        // 用户需要在系统中手动设置
+        if (isPinned) {
+          alert("窗口置顶：部分浏览器支持通过按 Cmd+Shift+F 启用始终在最前面，或在系统设置中配置。");
+        }
+      });
+
+      window.addEventListener("DOMContentLoaded", () => {
+        el("sshHost").value = "127.0.0.1";
+        updateStatus("未连接");
+        if (!focusBound) {
+          focusBound = true;
+          window.addEventListener("focus", () => {
+            if (term) term.focus();
+          });
+        }
+        loadMeta()
+          .then(() => hydrateUser())
+          .catch(() => hydrateUser());
+      });
+    </script>
+  </body>
+</html>
