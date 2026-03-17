@@ -1,4 +1,4 @@
-# Magnum SSH Dash
+# Magnum SSH Dash v1.10
 
 Web-based multi-session CLI/SSH control panel for macOS localhost.
 

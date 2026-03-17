@@ -1,4 +1,4 @@
-# Magnum SSH Dash
+# Magnum SSH Dash v1.10
 
 基于 Web 的 macOS 本地多会话 CLI/SSH 控制面板。
 
