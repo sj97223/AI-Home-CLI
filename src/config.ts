@@ -25,28 +25,43 @@ interface User {
 }
 
 function loadUsers(): User[] {
-  const usersFile = path.join(process.cwd(), "users.json");
-  if (existsSync(usersFile)) {
+  // First try credentials.json
+  const credFile = path.join(process.cwd(), "credentials.json");
+  if (existsSync(credFile)) {
     try {
-      const content = readFileSync(usersFile, "utf8");
-      return JSON.parse(content) as User[];
+      const content = readFileSync(credFile, "utf8");
+      const cred = JSON.parse(content) as { username: string; passwordHash: string };
+      if (cred.username && cred.passwordHash) {
+        // Validate scrypt hash format
+        if (!cred.passwordHash.startsWith("scrypt$")) {
+          console.error("Invalid password hash format in credentials.json. Please use scrypt hash format.");
+          console.error("Run: node -e \"const crypto=require('crypto');const salt=crypto.randomBytes(16).toString('hex');const hash=crypto.scryptSync(process.argv[1], salt, 64).toString('hex');console.log('scrypt$'+salt+'$'+hash)\" <password>");
+          process.exit(1);
+        }
+        return [{ username: cred.username, passwordHash: cred.passwordHash }];
+      }
     } catch {
-      // Fall back to admin user
+      // Fall back to env
     }
   }
-  // Default: admin user from env
+  // Fall back to env (only supports ADMIN_PASSWORD_HASH for security)
   const adminUsername = process.env.ADMIN_USERNAME || "admin";
   const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH || "";
-  const adminPassword = process.env.ADMIN_PASSWORD || "";
 
-  // If we have a hash, use it; otherwise use plain password
   if (adminPasswordHash) {
+    if (!adminPasswordHash.startsWith("scrypt$")) {
+      console.error("Invalid ADMIN_PASSWORD_HASH format. Please use scrypt hash format.");
+      console.error("Run: node -e \"const crypto=require('crypto');const salt=crypto.randomBytes(16).toString('hex');const hash=crypto.scryptSync(process.argv[1], salt, 64).toString('hex');console.log('scrypt$'+salt+'$'+hash)\" <password>");
+      process.exit(1);
+    }
     return [{ username: adminUsername, passwordHash: adminPasswordHash }];
-  } else if (adminPassword) {
-    // For plain password, we'll handle it in auth.ts
-    return [{ username: adminUsername, passwordHash: "plain:" + adminPassword }];
   }
   return [];
+}
+
+// Export reloadUsers function to allow reloading users after credentials.json changes
+export function reloadUsers(): void {
+  appConfig.users = loadUsers();
 }
 
 export const appConfig = {
@@ -60,7 +75,9 @@ export const appConfig = {
     .map((s) => s.trim())
     .filter(Boolean),
   requireCloudflareAccess: bool(process.env.REQUIRE_CF_ACCESS, true),
-  localBootstrapSecret: process.env.LOCAL_BOOTSTRAP_SECRET || "change-me",
+  cookieSecure: bool(process.env.COOKIE_SECURE, true),
+  localBootstrapSecret: process.env.LOCAL_BOOTSTRAP_SECRET ||
+    (() => { throw new Error("LOCAL_BOOTSTRAP_SECRET must be set"); })(),
   authTokenTtlSeconds: num(process.env.AUTH_TOKEN_TTL_SECONDS, 8 * 3600),
   sessionCookieName: process.env.SESSION_COOKIE_NAME || "msd_sid",
   users: loadUsers()

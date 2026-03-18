@@ -107,11 +107,6 @@
             <div class="flex items-center justify-between">
               <h2 class="font-semibold text-lg">终端窗口</h2>
               <div class="flex items-center gap-2">
-                <span id="connectionStatus" class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400">
-                  <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
-                  <span id="connectionMode">未连接</span>
-                </span>
-                <button id="switchModeBtn" class="text-xs bg-blue-700 px-2 py-1 rounded hover:bg-blue-600" title="切换到 HTTP 模式">HTTP</button>
                 <button id="fullscreenBtn" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600" title="全屏">⛶</button>
                 <button id="clearTerminalBtn" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600">清空</button>
                 <span id="terminalStatus" class="text-xs text-slate-400">未连接</span>
@@ -167,11 +162,7 @@
       let buildMeta = null;
       let agentPresets = [];
       const socketEventLog = [];
-      const commandHistory = [];
-      const MAX_HISTORY = 50;
-      let historyIndex = -1;
       let focusBound = false;
-      let preferHttpMode = false; // 默认使用 WebSocket，设置为 true 可默认使用 HTTP
 
       const el = (id) => document.getElementById(id);
 
@@ -297,27 +288,9 @@
 
       const updateStatus = (text) => {
         const statusEl = el("terminalStatus");
-        const statusDot = el("statusDot");
-        const connectionMode = el("connectionMode");
-        const state = activeSessionId ? sessionStates.get(activeSessionId) : null;
-        const mode = state?.mode || "";
-
-        // Update connection status indicator
-        if (mode === "ws") {
-          statusDot.className = "w-2 h-2 rounded-full bg-emerald-500";
-          connectionMode.textContent = "WebSocket 已连接";
-          connectionMode.className = "text-emerald-400";
-        } else if (mode === "http") {
-          statusDot.className = "w-2 h-2 rounded-full bg-amber-500";
-          connectionMode.textContent = "HTTP 降级模式";
-          connectionMode.className = "text-amber-400";
-        } else {
-          statusDot.className = "w-2 h-2 rounded-full bg-slate-500";
-          connectionMode.textContent = "未连接";
-          connectionMode.className = "text-slate-400";
-        }
-
-        const modeLabel = mode === "http" ? " (HTTP Fallback)" : "";
+        const modeLabel = activeSessionId && sessionStates.get(activeSessionId)?.mode === "http"
+          ? " (HTTP Fallback)"
+          : "";
         statusEl.textContent = `${text}${modeLabel}`;
       };
 
@@ -502,40 +475,30 @@
 
       const startWebSocketTerminal = async (sessionId, state) => {
         const ticket = await api("/api/socket-ticket");
-        pushSocketEvent(`ws: starting connection for session ${sessionId}`);
         return await new Promise((resolve, reject) => {
           const socket = io({
             withCredentials: true,
             transports: ["websocket"],
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            timeout: 5000,
+            reconnection: false,
+            timeout: 2500,
             auth: { ticket: ticket.ticket }
           });
           let done = false;
           let ready = false;
           let readyTimer = null;
-          let reconnectAttempts = 0;
-          const MAX_RECONNECT_ATTEMPTS = 5;
-          const fail = (msg, details = "") => {
+          const fail = (msg) => {
             if (done) return;
             done = true;
             try { socket.disconnect(); } catch {}
-            const fullMsg = details ? `${msg}: ${details}` : msg;
-            pushSocketEvent(`ws: failed - ${fullMsg}`);
-            reject(new Error(fullMsg));
+            reject(new Error(msg));
           };
-          const timer = setTimeout(() => fail("websocket_timeout", "connection timed out after 6s"), 6000);
+          const timer = setTimeout(() => fail("websocket timeout"), 3000);
 
           socket.on("connect", () => {
-            reconnectAttempts = 0;
             state.socket = socket;
             state.mode = "ws";
-            pushSocketEvent(`ws: connected socket_id=${socket.id} session=${sessionId}`);
-            pushSocketEvent(`ws: waiting for terminal:ready event...`);
-            readyTimer = setTimeout(() => fail("terminal_ready_timeout", "terminal:ready not received within 1.5s"), 1500);
+            pushSocketEvent(`connect sid=${sessionId}`);
+            readyTimer = setTimeout(() => fail("terminal ready timeout"), 1500);
             socket.on("terminal:ready", (payload) => {
               if (ready) return;
               ready = true;
@@ -543,54 +506,35 @@
                 clearTimeout(timer);
                 if (readyTimer) clearTimeout(readyTimer);
                 done = true;
-                pushSocketEvent(`ws: ready runtime_id=${payload?.runtimeId || "unknown"}`);
+                pushSocketEvent(`ready runtime=${payload?.runtimeId || "-"}`);
                 resolve(true);
               }
             });
-            pushSocketEvent(`ws: emitting terminal:attach cols=${term.cols || 120} rows=${term.rows || 30}`);
             socket.emit("terminal:attach", { sessionId, cols: term.cols || 120, rows: term.rows || 30 });
             socket.on("terminal:output", (msg) => {
               state.hadOutput = true;
               const data = msg?.data || msg;
-              pushSocketEvent(`ws: data chunk ${String(data || "").length}b`);
+              pushSocketEvent(`data ${String(data || "").length}b`);
               if (activeSessionId === sessionId) term.write(data);
               else state.buffer += data;
             });
             const onAck = (payload) => {
               consumeAckForState(state, payload);
               const ackValue = normalizeSeq(payload?.ack ?? payload?.seq ?? payload?.lastAck ?? payload);
-              if (ackValue !== null) pushSocketEvent(`ws: ack ${ackValue}`);
+              if (ackValue !== null) pushSocketEvent(`ack ${ackValue}`);
             };
             socket.on("terminal:ack", onAck);
             socket.on("terminal:input_ack", onAck);
             socket.on("terminal:error", (err) => {
-              const errObj = typeof err === "string" ? { message: err, code: null } : err;
-              pushSocketEvent(`ws: error code=${errObj.code || "unknown"} message=${errObj.message}`);
-              // Handle specific error codes
-              if (errObj.code === "RUNTIME_NOT_FOUND") {
-                fail("session_not_found", "The terminal session no longer exists");
-                return;
-              }
-              if (errObj.code === "WS_UPGRADE_FAILED") {
-                fail("websocket_upgrade_failed", "WebSocket upgrade was rejected by server");
-                return;
-              }
-              if (errObj.code === "AUTH_COOKIE_MISSING") {
-                fail("authentication_failed", "Missing authentication cookie");
-                return;
-              }
-              if (errObj.code === "PROXY_WS_BLOCKED") {
-                fail("websocket_blocked", "WebSocket is blocked by proxy or firewall");
-                return;
-              }
+              pushSocketEvent(`error ${err}`);
               if (String(err).includes("websocket_runtime_unavailable_use_http_fallback")) {
-                fail("websocket_unavailable", "Falling back to HTTP terminal");
+                fail("websocket_runtime_unavailable");
                 return;
               }
-              if (activeSessionId === sessionId) term.writeln(`\r\n[error] ${errObj.message}`);
+              if (activeSessionId === sessionId) term.writeln(`\r\n[error] ${err}`);
             });
-            socket.on("disconnect", (reason) => {
-              pushSocketEvent(`ws: disconnected reason=${reason}`);
+            socket.on("disconnect", () => {
+              pushSocketEvent(`disconnect sid=${sessionId}`);
               if (activeSessionId === sessionId) updateStatus("ws 已断开");
             });
           });
@@ -598,28 +542,8 @@
           socket.on("connect_error", (err) => {
             clearTimeout(timer);
             if (readyTimer) clearTimeout(readyTimer);
-            reconnectAttempts++;
-            const errMsg = err.message || "unknown error";
-            pushSocketEvent(`ws: connect_error attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} - ${errMsg}`);
-            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-              pushSocketEvent(`ws: max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached`);
-              fail("connection_failed", `after ${MAX_RECONNECT_ATTEMPTS} attempts: ${errMsg}`);
-            }
-          });
-
-          socket.on("reconnect", (attemptNumber) => {
-            pushSocketEvent(`ws: reconnected after ${attemptNumber} attempts`);
-            if (activeSessionId === sessionId) updateStatus(`已重连 (尝试 ${attemptNumber})`);
-          });
-
-          socket.on("reconnect_attempt", (attemptNumber) => {
-            pushSocketEvent(`ws: reconnect_attempt ${attemptNumber}`);
-            if (activeSessionId === sessionId) updateStatus(`重连中... (${attemptNumber}/${MAX_RECONNECT_ATTEMPTS})`);
-          });
-
-          socket.on("reconnect_failed", () => {
-            pushSocketEvent(`ws: reconnect_failed - all attempts exhausted`);
-            if (activeSessionId === sessionId) updateStatus("重连失败");
+            pushSocketEvent(`connect_error ${err.message || "unknown"}`);
+            fail(err.message || "websocket error");
           });
         });
       };
@@ -744,25 +668,16 @@
         }
 
         updateStatus("连接中...");
-
-        // 如果 preferHttpMode 为 true，直接使用 HTTP 模式
-        if (preferHttpMode) {
+        try {
+          await startWebSocketTerminal(sessionId, state);
+          setupInputBinding(state);
+          updateStatus("ws 已连接，可输入");
+          term.focus();
+        } catch {
           await startHttpFallbackTerminal(sessionId, state);
           setupInputBinding(state);
-          updateStatus("HTTP 模式已连接");
-          setTimeout(() => term && term.focus(), 100);
-        } else {
-          try {
-            await startWebSocketTerminal(sessionId, state);
-            setupInputBinding(state);
-            updateStatus("ws 已连接，可输入");
-            term.focus();
-          } catch {
-            await startHttpFallbackTerminal(sessionId, state);
-            setupInputBinding(state);
-            updateStatus("ws 失败，已切换 HTTP 回退 (点击终端后输入)");
-            setTimeout(() => term && term.focus(), 500);
-          }
+          updateStatus("ws 失败，已切换 HTTP 回退 (点击终端后输入)");
+          setTimeout(() => term && term.focus(), 500);
         }
         setTimeout(async () => {
           if (!state || state.hadOutput) return;
@@ -1061,14 +976,6 @@
         const state = sessionStates.get(activeSessionId);
         const command = el("commandInput").value;
         if (!command.trim()) return;
-        // 保存命令到历史记录
-        if (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== command) {
-          commandHistory.push(command);
-          if (commandHistory.length > MAX_HISTORY) {
-            commandHistory.shift();
-          }
-        }
-        historyIndex = commandHistory.length;
         sendInputForState(state, `${command}\n`)
           .then(() => {
             el("commandInput").value = "";
@@ -1078,28 +985,6 @@
             alert(`发送失败：${err.message || err}`);
           });
       });
-
-      // 命令历史导航 (上/下箭头)
-      el("commandInput").addEventListener("keydown", (e) => {
-        if (commandHistory.length === 0) return;
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          if (historyIndex > 0) {
-            historyIndex--;
-            el("commandInput").value = commandHistory[historyIndex];
-          }
-        } else if (e.key === "ArrowDown") {
-          e.preventDefault();
-          if (historyIndex < commandHistory.length - 1) {
-            historyIndex++;
-            el("commandInput").value = commandHistory[historyIndex];
-          } else {
-            historyIndex = commandHistory.length;
-            el("commandInput").value = "";
-          }
-        }
-      });
-
       el("agentPreset").addEventListener("change", () => updateCustomCommandVisibility());
       el("quickClaude").addEventListener("click", () => quickCreateAgent("claude").catch((err) => alert(`创建失败：${err.message}`)));
       el("quickOpenClaude").addEventListener("click", () => quickCreateAgent("openclaw").catch((err) => alert(`创建失败：${err.message}`)));
@@ -1111,78 +996,6 @@
           pushSocketEvent("terminal cleared");
         }
       });
-
-      // 切换 HTTP/WebSocket 模式按钮
-      el("switchModeBtn").addEventListener("click", async () => {
-        const sessionId = activeSessionId;
-        if (!sessionId) return;
-
-        const state = sessionStates.get(sessionId);
-        if (!state) return;
-
-        // 先停止当前的轮询/重连
-        if (state.pollTimer) {
-          clearInterval(state.pollTimer);
-          state.pollTimer = null;
-        }
-
-        // 停止 keepalive timer
-        if (state.keepaliveTimer) {
-          clearInterval(state.keepaliveTimer);
-          state.keepaliveTimer = null;
-        }
-
-        // 断开 WebSocket
-        if (state.socket) {
-          state.socket.removeAllListeners();
-          state.socket.disconnect();
-          state.socket = null;
-        }
-
-        // 停止 HTTP 终端
-        if (state.http?.terminalId) {
-          try {
-            await api(`/api/sessions/${sessionId}/terminal/http/stop`, {
-              method: "POST",
-              body: JSON.stringify({ terminalId: state.http.terminalId })
-            });
-          } catch {}
-          state.http = null;
-        }
-
-        // 等待一小段时间确保后端清理完成
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // 完全重置状态
-        state.mode = "";
-        state.hadOutput = false;
-        state.seq = 0;
-        state.lastAck = 0;
-        state.pendingSeqs = new Set();
-        state.buffer = "";
-
-        // 切换模式
-        preferHttpMode = !preferHttpMode;
-        const btn = el("switchModeBtn");
-        if (preferHttpMode) {
-          btn.textContent = "WS";
-          btn.className = "text-xs bg-emerald-700 px-2 py-1 rounded hover:bg-emerald-600";
-          btn.title = "切换到 WebSocket 模式";
-        } else {
-          btn.textContent = "HTTP";
-          btn.className = "text-xs bg-blue-700 px-2 py-1 rounded hover:bg-blue-600";
-          btn.title = "切换到 HTTP 模式";
-        }
-
-        // 重新连接 - 不保留任何旧状态
-        await openSessionTerminal(sessionId, state.displayName || "", { preserveBuffer: false });
-      });
-
-      // 初始化按钮文字
-      if (preferHttpMode) {
-        el("switchModeBtn").textContent = "WS";
-        el("switchModeBtn").className = "text-xs bg-emerald-700 px-2 py-1 rounded hover:bg-emerald-600";
-      }
 
       // 全屏按钮
       el("fullscreenBtn").addEventListener("click", () => {

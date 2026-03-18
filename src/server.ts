@@ -1,7 +1,7 @@
 import express from "express";
 import http from "node:http";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
@@ -12,7 +12,7 @@ import cors from "cors";
 import morgan from "morgan";
 import { Server } from "socket.io";
 import { z } from "zod";
-import { appConfig } from "./config.js";
+import { appConfig, reloadUsers } from "./config.js";
 import {
   addUser,
   authMiddleware,
@@ -43,6 +43,7 @@ import {
   restoreSessionsFromTmuxPrefix,
   sendInputToSession
 } from "./session-manager.js";
+import { attachTerminalSocket, startTerminalHeartbeat, TerminalErrorCode } from "./terminal-ws.js";
 
 const app = express();
 const serverStartedAt = new Date().toISOString();
@@ -81,6 +82,29 @@ const startupTokenSchema = z.string().regex(/^[A-Za-z0-9_./:@%+=,-]+$/);
 const startupCommandSchema = z.string().min(1).max(500);
 const sshUserSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
 const sshHostSchema = z.string().regex(/^[A-Za-z0-9.-]+$/);
+
+// Rate limiting for login attempts
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+function checkLoginRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const record = loginAttempts.get(ip);
+
+  if (!record || now > record.resetAt) {
+    // Start new window
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return true;
+  }
+
+  if (record.count >= MAX_LOGIN_ATTEMPTS) {
+    return false;
+  }
+
+  record.count++;
+  return true;
+}
 
 function parseStartupArgs(raw: string | undefined): string[] | undefined {
   const text = raw?.trim();
@@ -126,6 +150,27 @@ app.use((_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   next();
 });
+
+// 设备路由适配 - 根据 User-Agent 检测设备类型
+app.get("/", (req, res, next) => {
+  const userAgent = req.headers["user-agent"] || "";
+  const force = req.query.force as string;
+
+  let isMobile = force === "mobile";
+
+  if (!isMobile && force !== "desktop") {
+    // 检测移动设备
+    const mobileKeywords = ["Android", "iPhone", "iPad", "iPod", "Mobile", "BlackBerry", "Windows Phone"];
+    isMobile = mobileKeywords.some(keyword => userAgent.includes(keyword));
+  }
+
+  if (isMobile) {
+    res.sendFile(path.join(process.cwd(), "public", "mobile.html"));
+  } else {
+    res.sendFile(path.join(process.cwd(), "public", "index.html"));
+  }
+});
+
 app.use(express.static(path.join(process.cwd(), "public")));
 
 const upload = multer({
@@ -153,6 +198,12 @@ app.get("/api/meta", (_req, res) => {
 });
 
 app.post("/api/login", (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress || "unknown";
+  if (!checkLoginRateLimit(clientIp)) {
+    res.status(429).json({ error: "too_many_login_attempts", message: "Please try again later" });
+    return;
+  }
+
   const schema = z.object({
     username: z.string().min(1),
     password: z.string().min(1)
@@ -235,21 +286,25 @@ app.delete("/api/admin/users/:username", authMiddleware, async (req, res) => {
 // 修改密码
 app.post("/api/admin/change-password", authMiddleware, async (req, res) => {
   const schema = z.object({
-    newPassword: z.string().min(4)
+    newPassword: z.string().min(8, "Password must be at least 8 characters")
   });
   try {
     const parsed = schema.parse(req.body);
-    const newHash = hashPassword(parsed.newPassword);
-    // 写入 .env 文件
+    const session = getLoginSession(req);
+    if (!session) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    // Hash the new password
+    const passwordHash = hashPassword(parsed.newPassword);
+    // 写入 credentials.json
     const fs = await import("node:fs");
-    const path = await import("node:path");
-    const envPath = path.join(process.cwd(), ".env");
-    let envContent = fs.readFileSync(envPath, "utf8");
-    // 更新密码哈希
-    envContent = envContent.replace(/^ADMIN_PASSWORD_HASH=.*$/m, `ADMIN_PASSWORD_HASH=${newHash}`);
-    // 同时清除明文密码
-    envContent = envContent.replace(/^ADMIN_PASSWORD=.*$/m, "# ADMIN_PASSWORD= (使用哈希)");
-    fs.writeFileSync(envPath, envContent);
+    const pathModule = await import("node:path");
+    const credPath = pathModule.join(process.cwd(), "credentials.json");
+    const cred = { username: session.username, passwordHash: passwordHash };
+    fs.writeFileSync(credPath, JSON.stringify(cred, null, 2));
+    // Reload users from credentials.json
+    reloadUsers();
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: "change_password_failed", detail: String(err) });
@@ -263,14 +318,25 @@ app.post("/api/admin/change-username", authMiddleware, async (req, res) => {
   });
   try {
     const parsed = schema.parse(req.body);
-    // 写入 .env 文件
+    // 写入 credentials.json
     const fs = await import("node:fs");
     const pathModule = await import("node:path");
-    const envPath = pathModule.join(process.cwd(), ".env");
-    let envContent = fs.readFileSync(envPath, "utf8");
-    // 更新用户名
-    envContent = envContent.replace(/^ADMIN_USERNAME=.*$/m, `ADMIN_USERNAME=${parsed.newUsername}`);
-    fs.writeFileSync(envPath, envContent);
+    const credPath = pathModule.join(process.cwd(), "credentials.json");
+    let cred: { username: string; passwordHash?: string } = { username: "admin" };
+    if (existsSync(credPath)) {
+      try {
+        cred = JSON.parse(fs.readFileSync(credPath, "utf8"));
+      } catch {}
+    }
+    // Preserve passwordHash, if not present use existing or hash "admin"
+    if (!cred.passwordHash) {
+      const session = getLoginSession(req);
+      cred.passwordHash = hashPassword(session?.username === cred.username ? "admin" : "admin");
+    }
+    cred.username = parsed.newUsername;
+    fs.writeFileSync(credPath, JSON.stringify(cred, null, 2));
+    // Reload users from credentials.json
+    reloadUsers();
     res.json({ ok: true, username: parsed.newUsername });
   } catch (err) {
     res.status(400).json({ error: "change_username_failed", detail: String(err) });
@@ -315,6 +381,22 @@ app.get("/api/sessions", (_req, res) => {
   res.json({ sessions: listSessions() });
 });
 
+// Terminal status API
+app.get("/api/terminal/status/:sessionId", (req, res) => {
+  const session = getSession(req.params.sessionId);
+  if (!session) {
+    res.status(404).json({ error: "session_not_found" });
+    return;
+  }
+  res.json({
+    sessionId: session.id,
+    status: session.status,
+    tool: session.tool,
+    cwd: session.cwd,
+    createdAt: session.createdAt
+  });
+});
+
 app.post("/api/sessions", async (req, res) => {
   const schema = z.object({
     displayName: z.string().optional(),
@@ -335,10 +417,15 @@ app.post("/api/sessions", async (req, res) => {
     const sshMode = parsed.sshMode || (sshUser ? "auto" : "manual");
     const startupFromInput = parseStartupArgs(parsed.startupCommand);
     const tool = parsed.tool || "shell";
-    const startupArgs =
-      sshMode === "auto" && sshUser
-        ? buildSafeSshArgs(sshUser, sshHost, sshPort)
-        : startupFromInput;
+    // For SSH auto mode, build the command as a single string (not array)
+    let startupArgs = startupFromInput;
+    if (sshMode === "auto" && sshUser) {
+      const sshArgs = buildSafeSshArgs(sshUser, sshHost, sshPort);
+      if (sshArgs) {
+        // Join as a single command string for tmux send-keys
+        startupArgs = [sshArgs.join(" ")];
+      }
+    }
 
     const created = await createSession({
       displayName: parsed.displayName,
@@ -758,18 +845,27 @@ io.use((socket, next) => {
     if (payload) return next();
   }
   const session = getSocketSessionFromCookieHeader(socket.handshake.headers.cookie);
-  if (!session) return next(new Error("unauthorized"));
+  if (!session) return next(new Error("AUTH_COOKIE_MISSING"));
   next();
 });
 
 io.on("connection", (socket) => {
-  socket.on("terminal:attach", ({ sessionId }) => {
+  socket.on("terminal:attach", ({ sessionId, cols, rows }) => {
     const session = getSession(String(sessionId));
     if (!session) {
-      socket.emit("terminal:error", "session_not_found");
+      socket.emit("terminal:error", { type: "error", message: "session_not_found", code: TerminalErrorCode.RUNTIME_NOT_FOUND });
       return;
     }
-    socket.emit("terminal:error", "websocket_runtime_unavailable_use_http_fallback");
+    // Put session info in handshake.auth so attachTerminalSocket can read it
+    socket.handshake.auth.sessionId = sessionId;
+    socket.handshake.auth.cols = cols || 80;
+    socket.handshake.auth.rows = rows || 24;
+    // Store session info on socket for reference
+    socket.data.sessionId = sessionId;
+    socket.data.cols = cols || 80;
+    socket.data.rows = rows || 24;
+    // Attach terminal using WebSocket runtime
+    attachTerminalSocket(io, socket);
   });
 });
 
@@ -856,6 +952,7 @@ setInterval(() => {
 
 async function bootstrap(): Promise<void> {
   await restoreSessionsFromTmuxPrefix();
+  startTerminalHeartbeat(io);
   if (process.env.NODE_ENV !== "test") {
     httpServer.listen(appConfig.port, appConfig.host, () => {
       // eslint-disable-next-line no-console

@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Magnum SSH</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css" />
+    <style>
+      body {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .touch-target {
+        min-height: 44px;
+        min-width: 44px;
+      }
+      .nav-btn {
+        min-height: 56px;
+      }
+      #terminal {
+        height: calc(100vh - 180px);
+        min-height: 300px;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <!-- Login View -->
+    <div id="loginView" class="min-h-screen flex items-center justify-center p-4">
+      <div class="w-full max-w-sm space-y-6">
+        <div class="text-center">
+          <h1 class="text-2xl font-bold">Magnum SSH</h1>
+          <p id="buildTag" class="text-xs text-slate-500 mt-1">Version: -</p>
+        </div>
+        <form id="loginForm" class="space-y-4">
+          <input id="loginUsername" class="w-full bg-slate-900 border border-slate-700 px-4 py-3 rounded-lg text-base" placeholder="用户名" required />
+          <input id="loginPassword" type="password" class="w-full bg-slate-900 border border-slate-700 px-4 py-3 rounded-lg text-base" placeholder="密码" required />
+          <small id="loginError" class="text-sm text-rose-400 hidden block"></small>
+          <button type="submit" class="w-full bg-emerald-600 px-4 py-4 rounded-lg text-base font-semibold touch-target">登录</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Main View -->
+    <div id="mainView" class="hidden min-h-screen flex flex-col">
+      <!-- Top Header -->
+      <header class="bg-slate-900 p-4 flex justify-between items-center border-b border-slate-700">
+        <h1 class="text-lg font-bold">Magnum SSH</h1>
+        <button id="logoutBtn" class="text-sm bg-slate-700 px-3 py-2 rounded touch-target">退出</button>
+      </header>
+
+      <!-- Content Area -->
+      <main class="flex-1 p-4 pb-24 overflow-auto">
+        <!-- Sessions View -->
+        <div id="sessionsView" class="space-y-4">
+          <div class="flex justify-between items-center">
+            <h2 class="text-lg font-semibold">会话列表</h2>
+            <button id="refreshSessionsBtn" class="text-sm bg-slate-700 px-3 py-2 rounded touch-target">刷新</button>
+          </div>
+          <div id="sessionsList" class="space-y-3"></div>
+          <button id="newSessionBtn" class="w-full bg-emerald-600 px-4 py-4 rounded-lg text-base font-semibold touch-target">+ 新建会话</button>
+        </div>
+
+        <!-- Terminal View -->
+        <div id="terminalView" class="hidden h-full">
+          <div class="flex justify-between items-center mb-2">
+            <div class="flex items-center gap-2">
+              <span id="terminalSessionName" class="text-sm font-semibold"></span>
+              <span id="terminalStatus" class="text-xs px-2 py-1 rounded hidden">--</span>
+            </div>
+            <div class="flex gap-2">
+              <button id="terminalFullscreenBtn" class="text-sm bg-slate-700 px-3 py-2 rounded touch-target">全屏</button>
+              <button id="terminalClearBtn" class="text-sm bg-slate-700 px-3 py-2 rounded touch-target">清空</button>
+              <button id="terminalCloseBtn" class="text-sm bg-rose-700 px-3 py-2 rounded touch-target">关闭</button>
+            </div>
+          </div>
+          <div id="terminal" class="border border-slate-700 rounded overflow-hidden"></div>
+          <form id="mobileCommandForm" class="mt-2 flex gap-2">
+            <input id="mobileCommandInput" class="flex-1 bg-slate-900 border border-slate-700 px-3 py-3 rounded text-base" placeholder="命令输入" />
+            <button type="submit" class="bg-slate-700 px-4 py-3 rounded touch-target">发送</button>
+          </form>
+        </div>
+
+        <!-- Files View -->
+        <div id="filesView" class="hidden space-y-4">
+          <h2 class="text-lg font-semibold">文件管理</h2>
+          <div class="space-y-3">
+            <input id="listPath" class="w-full bg-slate-900 border border-slate-700 px-3 py-3 rounded text-base" placeholder="目录路径" />
+            <button id="listBtn" class="w-full bg-slate-700 px-4 py-3 rounded text-base touch-target">浏览</button>
+          </div>
+          <div id="filesList" class="space-y-1 bg-slate-900 border border-slate-700 rounded p-3 max-h-64 overflow-auto"></div>
+          <div class="space-y-3 pt-4 border-t border-slate-700">
+            <h3 class="font-semibold">上传文件</h3>
+            <input id="uploadPath" class="w-full bg-slate-900 border border-slate-700 px-3 py-3 rounded text-base" placeholder="目标目录" />
+            <input id="fileInput" type="file" class="block w-full text-sm" />
+            <button id="uploadBtn" class="w-full bg-indigo-600 px-4 py-3 rounded text-base touch-target">上传</button>
+          </div>
+        </div>
+
+        <!-- Settings View -->
+        <div id="settingsView" class="hidden space-y-6">
+          <h2 class="text-lg font-semibold">设置</h2>
+
+          <div class="space-y-3">
+            <h3 class="font-semibold">改用户名</h3>
+            <input id="newUsername" class="w-full bg-slate-900 border border-slate-700 px-3 py-3 rounded text-base" placeholder="新用户名" />
+            <button id="changeUsernameBtn" class="w-full bg-slate-700 px-4 py-3 rounded text-base touch-target">修改用户名</button>
+          </div>
+
+          <div class="space-y-3">
+            <h3 class="font-semibold">改密码</h3>
+            <input id="newPassword" type="password" class="w-full bg-slate-900 border border-slate-700 px-3 py-3 rounded text-base" placeholder="新密码" />
+            <input id="confirmPassword" type="password" class="w-full bg-slate-900 border border-slate-700 px-3 py-3 rounded text-base" placeholder="确认密码" />
+            <button id="changePasswordBtn" class="w-full bg-slate-700 px-4 py-3 rounded text-base touch-target">修改密码</button>
+          </div>
+
+          <div class="pt-4 border-t border-slate-700">
+            <p id="settingsMsg" class="text-sm text-center"></p>
+          </div>
+        </div>
+      </main>
+
+      <!-- Bottom Navigation -->
+      <nav class="fixed bottom-0 w-full bg-slate-900 border-t border-slate-700 flex">
+        <button data-view="sessions" class="nav-btn flex-1 p-3 text-center text-sm">
+          <span class="block text-lg mb-1">&#128196;</span>
+          <span>会话</span>
+        </button>
+        <button data-view="terminal" class="nav-btn flex-1 p-3 text-center text-sm">
+          <span class="block text-lg mb-1">&#128187;</span>
+          <span>终端</span>
+        </button>
+        <button data-view="files" class="nav-btn flex-1 p-3 text-center text-sm">
+          <span class="block text-lg mb-1">&#128193;</span>
+          <span>文件</span>
+        </button>
+        <button data-view="settings" class="nav-btn flex-1 p-3 text-center text-sm">
+          <span class="block text-lg mb-1">&#9881;</span>
+          <span>设置</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- New Session Modal -->
+    <div id="newSessionModal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+      <div class="bg-slate-900 border border-slate-700 rounded-lg p-4 w-full max-w-sm space-y-4 max-h-[80vh] overflow-auto">
+        <h3 class="text-lg font-semibold">新建会话</h3>
+        <form id="createSessionForm" class="space-y-3">
+          <label class="block space-y-1">
+            <span class="text-sm text-slate-400">会话名称</span>
+            <input id="sessionDisplayName" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base" placeholder="比如：My Shell" required />
+          </label>
+          <label class="block space-y-1">
+            <span class="text-sm text-slate-400">工作目录</span>
+            <select id="cwd" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base"></select>
+          </label>
+          <label class="block space-y-1">
+            <span class="text-sm text-slate-400">Agent 预设</span>
+            <select id="agentPreset" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base">
+              <option value="shell">Shell</option>
+              <option value="claude">Claude CLI</option>
+              <option value="openclaw">OpenClaw</option>
+              <option value="codex">Codex CLI</option>
+              <option value="gemini">Gemini CLI</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label id="customCommandWrap" class="hidden block space-y-1">
+            <span class="text-sm text-slate-400">自定义命令</span>
+            <input id="customCommand" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base" placeholder="例如: aider --model o3-mini" />
+          </label>
+          <label class="block space-y-1">
+            <span class="text-sm text-slate-400">SSH 模式</span>
+            <select id="sshMode" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base">
+              <option value="manual">手动 (不自动SSH)</option>
+              <option value="auto">自动 (SSH登录)</option>
+            </select>
+          </label>
+          <label class="block space-y-1">
+            <span class="text-sm text-slate-400">SSH 用户名 (自动模式)</span>
+            <input id="sshUser" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base" placeholder="如: jisong" />
+          </label>
+          <label class="block space-y-1">
+            <span class="text-sm text-slate-400">SSH Host</span>
+            <input id="sshHost" class="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded text-base" value="127.0.0.1" />
+          </label>
+          <div class="flex gap-2 pt-2">
+            <button type="button" id="cancelNewSession" class="flex-1 bg-slate-700 px-4 py-3 rounded text-base touch-target">取消</button>
+            <button type="submit" class="flex-1 bg-emerald-600 px-4 py-3 rounded text-base font-semibold touch-target">创建</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script>
+      let currentUser = null;
+      let term = null;
+      let fitAddon = null;
+      let activeSessionId = "";
+      let activeSessionName = "";
+      const sessionStates = new Map();
+      let buildMeta = null;
+      let agentPresets = [];
+      let currentView = "sessions";
+
+      const el = (id) => document.getElementById(id);
+
+      const api = async (path, options = {}) => {
+        const headers = { ...(options.headers || {}) };
+        const hasBody = options.body !== undefined && options.body !== null && !(options.body instanceof FormData);
+        if (hasBody && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+        const res = await fetch(path, { credentials: "include", ...options, headers, body: options.body });
+        if (!res.ok) throw new Error(await res.text());
+        if (res.status === 204) return null;
+        return res.json();
+      };
+
+      const showView = (viewName) => {
+        currentView = viewName;
+        el("sessionsView").classList.toggle("hidden", viewName !== "sessions");
+        el("terminalView").classList.toggle("hidden", viewName !== "terminal");
+        el("filesView").classList.toggle("hidden", viewName !== "files");
+        el("settingsView").classList.toggle("hidden", viewName !== "settings");
+
+        document.querySelectorAll("nav button").forEach((btn) => {
+          const isActive = btn.dataset.view === viewName;
+          btn.classList.toggle("bg-slate-800", isActive);
+          btn.classList.toggle("text-emerald-400", isActive);
+        });
+
+        if (viewName === "terminal" && term) {
+          setTimeout(() => fitAddon?.fit(), 100);
+        }
+      };
+
+      const updateTerminalStatus = (mode) => {
+        const statusEl = el("terminalStatus");
+        if (!mode) {
+          statusEl.classList.add("hidden");
+          return;
+        }
+        statusEl.classList.remove("hidden");
+        if (mode === "ws") {
+          statusEl.textContent = "WS";
+          statusEl.className = "text-xs px-2 py-1 rounded bg-emerald-900 text-emerald-300";
+        } else if (mode === "http") {
+          statusEl.textContent = "HTTP";
+          statusEl.className = "text-xs px-2 py-1 rounded bg-yellow-900 text-yellow-300";
+        }
+      };
+
+      const toggleLoginView = async () => {
+        const showMain = Boolean(currentUser);
+        el("loginView").classList.toggle("hidden", showMain);
+        el("mainView").classList.toggle("hidden", !showMain);
+        el("buildTag").textContent = buildMeta
+          ? `Version: ${buildMeta.version} | Build: ${buildMeta.buildId || "-"}`
+          : "Version: -";
+        if (showMain) {
+          await loadOptions();
+          await loadSessions();
+          ensureTerminal();
+        }
+      };
+
+      const ensureTerminal = () => {
+        if (term) return;
+        term = new Terminal({
+          cursorBlink: true,
+          convertEol: true,
+          fontSize: 14,
+          fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+          theme: {
+            background: "#020617",
+            foreground: "#e2e8f0"
+          }
+        });
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(el("terminal"));
+        el("terminal").addEventListener("click", () => term?.focus());
+        term.focus();
+        fitAddon.fit();
+      };
+
+      const loadMeta = async () => {
+        try {
+          buildMeta = await api("/api/meta");
+        } catch {
+          buildMeta = null;
+        }
+      };
+
+      const loadOptions = async () => {
+        try {
+          const data = await api("/api/options");
+          agentPresets = Array.isArray(data.agentPresets) ? data.agentPresets : [];
+          const dirs = Array.isArray(data.allowedRoots) ? data.allowedRoots : [];
+          const cwdSelect = el("cwd");
+          cwdSelect.innerHTML = "";
+          for (const dir of dirs) {
+            const opt = document.createElement("option");
+            opt.value = dir;
+            opt.textContent = dir;
+            cwdSelect.appendChild(opt);
+          }
+          const fallback = data.defaultCwd || "/Users/jisong/Documents";
+          cwdSelect.value = dirs.includes(fallback) ? fallback : (dirs[0] || fallback);
+          el("listPath").value = cwdSelect.value;
+          el("uploadPath").value = cwdSelect.value;
+        } catch (err) {
+          console.error("Failed to load options:", err);
+        }
+      };
+
+      const loadSessions = async () => {
+        try {
+          const data = await api("/api/sessions");
+          renderSessions(data?.sessions || []);
+        } catch (err) {
+          console.error("Failed to load sessions:", err);
+          renderSessions([]);
+        }
+      };
+
+      const renderSessions = (sessions) => {
+        const list = el("sessionsList");
+        list.innerHTML = "";
+        if (sessions.length === 0) {
+          list.innerHTML = '<p class="text-slate-400 text-sm text-center py-4">暂无会话</p>';
+          return;
+        }
+        for (const session of sessions) {
+          const card = document.createElement("div");
+          card.className = "bg-slate-900 border border-slate-700 rounded-lg p-4";
+          card.innerHTML = `
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="font-semibold">${session.displayName || session.id}</h3>
+                <p class="text-xs text-slate-400">${session.id}</p>
+              </div>
+              <div class="flex gap-2">
+                <button class="rename-session-btn bg-blue-600 px-3 py-2 rounded text-sm touch-target" data-id="${session.id}" data-name="${session.displayName || session.id}">重命名</button>
+                <button class="open-session-btn bg-emerald-600 px-3 py-2 rounded text-sm touch-target" data-id="${session.id}" data-name="${session.displayName || session.id}">打开</button>
+                <button class="delete-session-btn bg-rose-700 px-3 py-2 rounded text-sm touch-target" data-id="${session.id}">删除</button>
+              </div>
+            </div>
+          `;
+          list.appendChild(card);
+        }
+        document.querySelectorAll(".open-session-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            openSessionTerminal(btn.dataset.id, btn.dataset.name);
+          });
+        });
+        document.querySelectorAll(".rename-session-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const newName = prompt("请输入新名称:", btn.dataset.name);
+            if (newName && newName.trim() !== btn.dataset.name) {
+              try {
+                await api(`/api/sessions/${btn.dataset.id}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({ displayName: newName.trim() })
+                });
+                await loadSessions();
+              } catch (err) {
+                alert(`重命名失败: ${err.message}`);
+              }
+            }
+          });
+        });
+        document.querySelectorAll(".delete-session-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            if (confirm("确定删除此会话?")) {
+              try {
+                await api(`/api/sessions/${btn.dataset.id}`, { method: "DELETE" });
+                await loadSessions();
+              } catch (err) {
+                alert(`删除失败: ${err.message}`);
+              }
+            }
+          });
+        });
+      };
+
+      const closeState = async (state) => {
+        if (!state) return;
+        if (state.socket) {
+          state.socket.disconnect();
+          state.socket = null;
+        }
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        if (state.keepaliveTimer) {
+          clearInterval(state.keepaliveTimer);
+          state.keepaliveTimer = null;
+        }
+        if (state.http && state.http.terminalId) {
+          try {
+            await api(`/api/sessions/${state.sessionId}/terminal/http/stop`, {
+              method: "POST",
+              body: JSON.stringify({ terminalId: state.http.terminalId })
+            });
+          } catch {}
+        }
+      };
+
+      const normalizeSeq = (value) => {
+        if (value === null || value === undefined) return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      };
+
+      const nextSeqForState = (state) => {
+        state.seq = (state.seq || 0) + 1;
+        if (!state.pendingSeqs) state.pendingSeqs = new Set();
+        state.pendingSeqs.add(state.seq);
+        return state.seq;
+      };
+
+      const consumeAckForState = (state, payload) => {
+        const ack = normalizeSeq(payload?.ack ?? payload?.seq ?? payload?.lastAck ?? payload);
+        if (ack === null) return;
+        state.lastAck = Math.max(state.lastAck || 0, ack);
+        if (state.pendingSeqs) {
+          for (const seq of Array.from(state.pendingSeqs)) {
+            if (seq <= ack) state.pendingSeqs.delete(seq);
+          }
+        }
+      };
+
+      let inputDisposer = null;
+      let resizeListener = null;
+
+      const detachActiveInput = () => {
+        if (inputDisposer) {
+          inputDisposer.dispose();
+          inputDisposer = null;
+        }
+      };
+
+      const detachResizeListener = () => {
+        if (resizeListener) {
+          window.removeEventListener("resize", resizeListener);
+          resizeListener = null;
+        }
+      };
+
+      const sendInputForState = async (state, data, allowRetry = true) => {
+        if (!state || !data) return;
+        const seq = nextSeqForState(state);
+        try {
+          if (state.mode === "ws" && state.socket && state.socket.connected) {
+            state.socket.emit("terminal:input", { type: "input", data });
+            return;
+          }
+          if (state.mode === "ws") {
+            throw new Error("terminal_not_found");
+          }
+          if (state.mode === "http" && state.http?.terminalId) {
+            const res = await fetch(`/api/sessions/${state.sessionId}/terminal/http/input`, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ terminalId: state.http.terminalId, data, seq })
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              throw new Error(text);
+            }
+            if (text) {
+              try {
+                consumeAckForState(state, JSON.parse(text));
+              } catch {
+                // ignore non-json body
+              }
+            }
+            return;
+          }
+          throw new Error("terminal_not_found");
+        } catch (err) {
+          if (state.pendingSeqs) state.pendingSeqs.delete(seq);
+          throw err;
+        }
+      };
+
+      const setupInputBinding = (state) => {
+        detachActiveInput();
+        const sendInput = (data) => {
+          if (!data) return;
+          sendInputForState(state, data).catch((err) => {
+            console.error("input_error", err?.message || "unknown");
+          });
+        };
+        inputDisposer = term.onData((data) => sendInput(data));
+        detachResizeListener();
+        resizeListener = () => {
+          if (fitAddon) fitAddon.fit();
+          const cols = term.cols || 120;
+          const rows = term.rows || 30;
+          if (state.mode === "ws" && state.socket) {
+            state.socket.emit("terminal:resize", { type: "resize", cols, rows });
+          } else if (state.mode === "http" && state.http?.terminalId) {
+            fetch(`/api/sessions/${state.sessionId}/terminal/http/resize`, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ terminalId: state.http.terminalId, cols, rows })
+            }).catch(() => undefined);
+          }
+        };
+        window.addEventListener("resize", resizeListener);
+        if (fitAddon) fitAddon.fit();
+        term.focus();
+      };
+
+      const startWebSocketTerminal = async (sessionId, state) => {
+        const ticket = await api("/api/socket-ticket");
+        return await new Promise((resolve, reject) => {
+          const socket = io({
+            withCredentials: true,
+            transports: ["websocket"],
+            reconnection: true,
+            reconnectionAttempts: 3,
+            reconnectionDelay: 1000,
+            timeout: 5000,
+            auth: { ticket: ticket.ticket }
+          });
+          let done = false;
+          let ready = false;
+          let readyTimer = null;
+          const fail = (msg) => {
+            if (done) return;
+            done = true;
+            try { socket.disconnect(); } catch {}
+            reject(new Error(msg));
+          };
+          const timer = setTimeout(() => fail("websocket timeout"), 5000);
+
+          socket.on("connect", () => {
+            state.socket = socket;
+            state.mode = "ws";
+            readyTimer = setTimeout(() => fail("terminal ready timeout"), 3000);
+            socket.on("terminal:ready", (payload) => {
+              if (ready) return;
+              ready = true;
+              if (!done) {
+                clearTimeout(timer);
+                if (readyTimer) clearTimeout(readyTimer);
+                done = true;
+                resolve(true);
+              }
+            });
+            socket.emit("terminal:attach", { sessionId, cols: term.cols || 120, rows: term.rows || 30 });
+            socket.on("terminal:output", (msg) => {
+              state.hadOutput = true;
+              const data = msg?.data || msg;
+              if (activeSessionId === sessionId) term.write(data);
+              else state.buffer += data;
+            });
+            const onAck = (payload) => {
+              consumeAckForState(state, payload);
+            };
+            socket.on("terminal:ack", onAck);
+            socket.on("terminal:input_ack", onAck);
+            socket.on("terminal:error", (err) => {
+              if (String(err).includes("websocket_runtime_unavailable_use_http_fallback")) {
+                fail("websocket_runtime_unavailable");
+                return;
+              }
+              if (activeSessionId === sessionId) term.writeln(`\r\n[error] ${err}`);
+            });
+            socket.on("disconnect", () => {
+              if (activeSessionId === sessionId) console.log("ws disconnected");
+            });
+          });
+
+          socket.on("connect_error", (err) => {
+            clearTimeout(timer);
+            if (readyTimer) clearTimeout(readyTimer);
+            fail(err.message || "websocket error");
+          });
+        });
+      };
+
+      const startHttpFallbackTerminal = async (sessionId, state) => {
+        const created = await api(`/api/sessions/${sessionId}/terminal/http/start`, {
+          method: "POST",
+          body: JSON.stringify({ cols: term.cols || 120, rows: term.rows || 30 })
+        });
+        state.mode = "http";
+        state.http = {
+          terminalId: created.terminalId,
+          cursor: created.cursor ?? created.nextCursor ?? created.startCursor ?? null
+        };
+        state.pollTimer = setInterval(async () => {
+          try {
+            const cursorParam = state.http && state.http.cursor !== null && state.http.cursor !== undefined
+              ? `&cursor=${encodeURIComponent(state.http.cursor)}`
+              : "";
+            const polled = await api(
+              `/api/sessions/${sessionId}/terminal/http/poll?terminalId=${encodeURIComponent(state.http.terminalId)}${cursorParam}`
+            );
+            if (polled?.nextCursor !== undefined || polled?.cursor !== undefined) {
+              state.http.cursor = polled.nextCursor ?? polled.cursor ?? state.http.cursor;
+            }
+            consumeAckForState(state, polled?.ack ?? polled?.lastAck ?? polled?.seq);
+
+            const events = Array.isArray(polled.events) ? polled.events : [];
+            if (events.length) {
+              for (const event of events) {
+                if (!event) continue;
+                if (event.type === "ack" || event.kind === "ack") {
+                  consumeAckForState(state, event.ack ?? event.seq ?? event.lastAck);
+                  continue;
+                }
+                const data = event.data ?? event.chunk ?? event.output ?? "";
+                if (!data) continue;
+                const isSnapshot = event.type === "snapshot" || event.kind === "snapshot" || event.full === true;
+                state.hadOutput = true;
+                if (isSnapshot) {
+                  state.buffer = data;
+                } else {
+                  state.buffer += data;
+                }
+                if (activeSessionId === sessionId) {
+                  if (isSnapshot) {
+                    term.clear();
+                    term.write(data);
+                  } else {
+                    term.write(data);
+                  }
+                }
+              }
+            } else {
+              const chunks = Array.isArray(polled.chunks) ? polled.chunks : [];
+              if (chunks.length) {
+                state.hadOutput = true;
+                const latest = chunks[chunks.length - 1];
+                const previous = state.buffer || "";
+                const delta = latest.startsWith(previous) ? latest.slice(previous.length) : latest;
+                state.buffer = latest;
+                if (activeSessionId === sessionId) {
+                  if (latest.startsWith(previous)) term.write(delta);
+                  else {
+                    term.clear();
+                    term.write(latest);
+                  }
+                }
+              }
+            }
+            if (polled.closed) {
+              clearInterval(state.pollTimer);
+              state.pollTimer = null;
+            }
+          } catch {
+            // keep polling
+          }
+        }, 350);
+      };
+
+      const openSessionTerminal = async (sessionId, displayName = "", options = {}) => {
+        ensureTerminal();
+        activeSessionId = sessionId;
+        activeSessionName = displayName || sessionId;
+        el("terminalSessionName").textContent = activeSessionName;
+
+        let state = sessionStates.get(sessionId);
+        if (!state) {
+          state = {
+            sessionId,
+            displayName,
+            mode: "",
+            buffer: "",
+            hadOutput: false,
+            socket: null,
+            http: null,
+            pollTimer: null,
+            keepaliveTimer: null,
+            seq: 0,
+            lastAck: 0,
+            pendingSeqs: new Set()
+          };
+          sessionStates.set(sessionId, state);
+        }
+
+        if (!options.preserveBuffer) term.clear();
+        if (fitAddon) fitAddon.fit();
+        if (state.buffer) term.write(state.buffer);
+
+        if (!state.keepaliveTimer) {
+          state.keepaliveTimer = setInterval(() => {
+            api(`/api/sessions/${sessionId}/keepalive`, { method: "POST" }).catch(() => undefined);
+          }, 30000);
+        }
+
+        if (state.socket || state.pollTimer) {
+          setupInputBinding(state);
+          updateTerminalStatus(state.mode);
+          setTimeout(() => term && term.focus(), 100);
+          showView("terminal");
+          return;
+        }
+
+        try {
+          await startWebSocketTerminal(sessionId, state);
+          setupInputBinding(state);
+          updateTerminalStatus(state.mode);
+          term.focus();
+        } catch {
+          await startHttpFallbackTerminal(sessionId, state);
+          setupInputBinding(state);
+          updateTerminalStatus(state.mode);
+          setTimeout(() => term && term.focus(), 500);
+        }
+        setTimeout(async () => {
+          if (!state || state.hadOutput) return;
+          try {
+            const cap = await api(`/api/sessions/${sessionId}/terminal/capture`);
+            if (cap?.output) {
+              state.hadOutput = true;
+              if (activeSessionId === sessionId) term.write(`\r\n${cap.output}\r\n`);
+              else state.buffer += `\r\n${cap.output}\r\n`;
+            }
+          } catch {}
+        }, 1200);
+        showView("terminal");
+      };
+
+      const closeTerminal = async () => {
+        if (activeSessionId) {
+          const state = sessionStates.get(activeSessionId);
+          if (state) {
+            await closeState(state);
+            sessionStates.delete(activeSessionId);
+          }
+          activeSessionId = "";
+          activeSessionName = "";
+        }
+        term?.clear();
+        updateTerminalStatus(null);
+        showView("sessions");
+      };
+
+      // Event Listeners
+      el("loginForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = el("loginUsername").value.trim();
+        const password = el("loginPassword").value;
+        try {
+          await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
+          currentUser = await api("/api/me");
+          await toggleLoginView();
+        } catch (err) {
+          el("loginError").textContent = err.message;
+          el("loginError").classList.remove("hidden");
+        }
+      });
+
+      el("logoutBtn").addEventListener("click", async () => {
+        try {
+          await api("/api/logout", { method: "POST" });
+          currentUser = null;
+          await toggleLoginView();
+        } catch (err) {
+          alert(`退出失败: ${err.message}`);
+        }
+      });
+
+      document.querySelectorAll("nav button").forEach((btn) => {
+        btn.addEventListener("click", () => showView(btn.dataset.view));
+      });
+
+      el("refreshSessionsBtn").addEventListener("click", loadSessions);
+
+      el("newSessionBtn").addEventListener("click", () => {
+        el("newSessionModal").classList.remove("hidden");
+      });
+
+      el("cancelNewSession").addEventListener("click", () => {
+        el("newSessionModal").classList.add("hidden");
+      });
+
+      el("createSessionForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const displayName = el("sessionDisplayName").value.trim();
+        const cwd = el("cwd").value;
+        const agentPreset = el("agentPreset").value;
+        const customCommand = el("customCommand").value.trim();
+        const sshMode = el("sshMode").value;
+        const sshUser = el("sshUser").value.trim();
+        const sshHost = el("sshHost").value.trim() || "127.0.0.1";
+
+        if (!displayName || !cwd) {
+          alert("请输入会话名称和工作目录");
+          return;
+        }
+
+        const tool = ["shell", "claude", "openclaw", "codex", "gemini"].includes(agentPreset)
+          ? agentPreset
+          : "shell";
+
+        const payload = {
+          displayName,
+          cwd,
+          tool,
+          sshMode,
+          sshUser,
+          sshHost,
+          ...(agentPreset === "custom" && customCommand ? { startupCommand: customCommand } : {})
+        };
+
+        try {
+          await api("/api/sessions", { method: "POST", body: JSON.stringify(payload) });
+          el("newSessionModal").classList.add("hidden");
+          el("sessionDisplayName").value = "";
+          el("customCommand").value = "";
+          await loadSessions();
+        } catch (err) {
+          alert(`创建失败: ${err.message}`);
+        }
+      });
+
+      el("agentPreset").addEventListener("change", () => {
+        const wrap = el("customCommandWrap");
+        wrap.classList.toggle("hidden", el("agentPreset").value !== "custom");
+      });
+
+      el("terminalCloseBtn").addEventListener("click", closeTerminal);
+
+      el("terminalClearBtn").addEventListener("click", () => term?.clear());
+
+      el("terminalFullscreenBtn").addEventListener("click", () => {
+        el("terminal").requestFullscreen?.();
+      });
+
+      el("mobileCommandForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const input = el("mobileCommandInput");
+        const cmd = input.value;
+        if (cmd && activeSessionId) {
+          const state = sessionStates.get(activeSessionId);
+          sendInputForState(state, cmd + "\r");
+          input.value = "";
+        }
+      });
+
+      // Files
+      el("listBtn").addEventListener("click", async () => {
+        const path = el("listPath").value.trim();
+        if (!path) return;
+        try {
+          const data = await api(`/api/files/list?path=${encodeURIComponent(path)}`);
+          const list = el("filesList");
+          list.innerHTML = "";
+          if (!data.entries?.length) {
+            list.innerHTML = '<p class="text-slate-400 text-sm">空目录</p>';
+            return;
+          }
+          for (const entry of data.entries) {
+            const item = document.createElement("div");
+            item.className = "flex justify-between items-center py-2 border-b border-slate-700 last:border-0";
+            const icon = entry.isDirectory ? "📁" : "📄";
+            const sizeOrDir = entry.isDirectory ? "目录" : (entry.size || "-");
+            const downloadBtn = entry.isDirectory ? "" : `<button class="download-file-btn bg-indigo-600 px-2 py-1 rounded text-xs touch-target ml-2" data-path="${entry.path || path + '/' + entry.name}">下载</button>`;
+            item.innerHTML = `
+              <div class="flex items-center">
+                <span class="text-sm">${icon} ${entry.name}</span>
+                ${downloadBtn}
+              </div>
+              <span class="text-xs text-slate-400">${sizeOrDir}</span>
+            `;
+            list.appendChild(item);
+          }
+          document.querySelectorAll(".download-file-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              const filePath = btn.dataset.path;
+              const url = `/api/files/download?path=${encodeURIComponent(filePath)}`;
+              window.open(url, "_blank");
+            });
+          });
+        } catch (err) {
+          alert(`获取文件列表失败: ${err.message}`);
+        }
+      });
+
+      el("uploadBtn").addEventListener("click", async () => {
+        const fileInput = el("fileInput");
+        const uploadPath = el("uploadPath").value.trim();
+        if (!fileInput.files.length) {
+          alert("请选择文件");
+          return;
+        }
+        if (!uploadPath) {
+          alert("请输入目标目录");
+          return;
+        }
+        const form = new FormData();
+        form.append("file", fileInput.files[0]);
+        form.append("path", uploadPath);
+        try {
+          await fetch("/api/files/upload", { method: "POST", credentials: "include", body: form });
+          alert("上传成功");
+          fileInput.value = "";
+        } catch (err) {
+          alert(`上传失败: ${err.message}`);
+        }
+      });
+
+      // Settings
+      el("changeUsernameBtn").addEventListener("click", async () => {
+        const newUsername = el("newUsername").value.trim();
+        if (!newUsername) {
+          alert("请输入新用户名");
+          return;
+        }
+        try {
+          await api("/api/admin/change-username", {
+            method: "POST",
+            body: JSON.stringify({ newUsername: newUsername })
+          });
+          el("newUsername").value = "";
+          el("settingsMsg").textContent = "用户名修改成功";
+          el("settingsMsg").className = "text-sm text-center text-emerald-400";
+        } catch (err) {
+          el("settingsMsg").textContent = err.message;
+          el("settingsMsg").className = "text-sm text-center text-rose-400";
+        }
+      });
+
+      el("changePasswordBtn").addEventListener("click", async () => {
+        const newPassword = el("newPassword").value;
+        const confirmPassword = el("confirmPassword").value;
+        if (!newPassword) {
+          alert("请输入新密码");
+          return;
+        }
+        if (newPassword !== confirmPassword) {
+          alert("两次密码不一致");
+          return;
+        }
+        try {
+          await api("/api/admin/change-password", {
+            method: "POST",
+            body: JSON.stringify({ newPassword: newPassword })
+          });
+          el("newPassword").value = "";
+          el("confirmPassword").value = "";
+          el("settingsMsg").textContent = "密码修改成功";
+          el("settingsMsg").className = "text-sm text-center text-emerald-400";
+        } catch (err) {
+          el("settingsMsg").textContent = err.message;
+          el("settingsMsg").className = "text-sm text-center text-rose-400";
+        }
+      });
+
+      // Init
+      (async () => {
+        await loadMeta();
+        try {
+          currentUser = await api("/api/me");
+        } catch {
+          currentUser = null;
+        }
+        await toggleLoginView();
+      })();
+    </script>
+  </body>
+</html>

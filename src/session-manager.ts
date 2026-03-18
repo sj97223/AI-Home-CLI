@@ -24,7 +24,7 @@ function presetCmd(tool: ToolPreset): string[] | null {
 }
 
 function isToolPreset(value: unknown): value is ToolPreset {
-  return value === "shell" || value === "claude" || value === "codex" || value === "gemini";
+  return value === "shell" || value === "claude" || value === "codex" || value === "gemini" || value === "openclaw";
 }
 
 async function persistSessionMetadata(session: SessionSpec): Promise<void> {

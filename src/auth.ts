@@ -39,15 +39,6 @@ export function verifyPassword(username: string, password: string): { valid: boo
   for (const user of appConfig.users) {
     if (user.username !== username) continue;
 
-    // Handle plain password (for development/testing)
-    if (user.passwordHash.startsWith("plain:")) {
-      const plainPassword = user.passwordHash.slice(6);
-      if (timingSafeEqual(plainPassword, password)) {
-        return { valid: true, username: user.username };
-      }
-      continue;
-    }
-
     // Handle scrypt hash
     const parsed = parseScryptHash(user.passwordHash);
     if (!parsed) continue;
@@ -126,14 +117,14 @@ export function resolveCloudflareIdentity(req: Request): string | null {
 
 export function setSessionCookie(res: Response, sid: string): void {
   const maxAgeMs = appConfig.authTokenTtlSeconds * 1000;
-  const secureAttr = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secureAttr = appConfig.cookieSecure ? "; Secure" : "";
   const cookie = `${appConfig.sessionCookieName}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Strict${secureAttr}; Max-Age=${appConfig.authTokenTtlSeconds}`;
   res.setHeader("Set-Cookie", cookie);
   res.setHeader("X-Session-Max-Age-Ms", String(maxAgeMs));
 }
 
 export function clearSessionCookie(res: Response): void {
-  const secureAttr = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secureAttr = appConfig.cookieSecure ? "; Secure" : "";
   const cookie = `${appConfig.sessionCookieName}=; Path=/; HttpOnly; SameSite=Strict${secureAttr}; Max-Age=0`;
   res.setHeader("Set-Cookie", cookie);
 }
