@@ -1,4 +1,4 @@
-# Magnum SSH Dash v1.10
+# Magnum SSH Dash v1.13.2
 
 Web-based multi-session CLI/SSH control panel for macOS localhost.
 
@@ -9,12 +9,14 @@ Web-based multi-session CLI/SSH control panel for macOS localhost.
 - **Login Authentication**: Username/password authentication with cookie-based sessions
 - **Change Credentials**: Change username and password after login
 - **In-browser Terminal**: Full terminal emulation in browser with multi-session tabs
+- **WebSocket Real-time Terminal**: Low-latency WebSocket connection with auto-reconnect
+- **Command History**: Navigate previous commands with up/down arrow keys
 - **Multiple Agent Presets**: Support for shell, claude, openclaw, codex, gemini, and custom commands
 - **Session Management**: Create, rename, detach to background, and kill sessions
 - **Auto-restore**: Sessions automatically restored from tmux after backend restart
 - **File Management**: List, upload, and download files within allowed directories
-- **HTTP Polling Terminal**: Real-time terminal via HTTP long-polling (WebSocket fallback)
-- **Security**: Scrypt password hashing, HttpOnly cookies, CSRF protection
+- **Mobile Adaptation**: Touch-friendly UI with file download, session rename, and status indicators
+- **Security Enhancement**: Scrypt password hashing, HttpOnly cookies, CSRF protection, removed plaintext password support
 
 ## Quick Start
 
@@ -57,7 +59,7 @@ After logging in:
 | `ADMIN_PASSWORD_HASH` | Scrypt hash (overrides password) | - |
 | `SESSION_COOKIE_NAME` | Session cookie name | `msd_sid` |
 | `AUTH_TOKEN_TTL_SECONDS` | Session lifetime | `28800` (8 hours) |
-| `LOCAL_BOOTSTRAP_SECRET` | Secret for socket tickets | `change-me` |
+| `LOCAL_BOOTSTRAP_SECRET` | Secret for socket tickets (required) | - |
 
 ## Generating Password Hash
 
@@ -113,9 +115,9 @@ node -e "const crypto = require('crypto'); const salt = crypto.randomBytes(16).t
 ## Security Notes
 
 - Always use `ADMIN_PASSWORD_HASH` instead of plain `ADMIN_PASSWORD` in production
-- Change the default `LOCAL_BOOTSTRAP_SECRET` value
+- `LOCAL_BOOTSTRAP_SECRET` must be set in environment
 - When deploying publicly, enable `REQUIRE_CF_ACCESS=true` and use Cloudflare Access
-- The `.env` file is gitignored - never commit credentials
+- The `.env` and `credentials.json` files are gitignored - never commit credentials
 
 ## Development
 

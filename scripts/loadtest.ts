@@ -6,7 +6,6 @@ type OperationName =
   | "options"
   | "createSession"
   | "keepAlive"
-  | "debug"
   | "deleteSession"
   | "healthCheck";
 
@@ -15,7 +14,6 @@ const OPERATION_NAMES: OperationName[] = [
   "options",
   "createSession",
   "keepAlive",
-  "debug",
   "deleteSession",
   "healthCheck"
 ];
@@ -86,13 +84,6 @@ interface OptionsResponse {
 
 interface CreateSessionResponse {
   id: string;
-}
-
-interface DebugResponse {
-  hasRuntime?: boolean;
-  closed?: boolean;
-  attachedSockets?: number;
-  lastError?: string | null;
 }
 
 type Action = () => Promise<Response>;
@@ -309,7 +300,7 @@ async function runLoadTest(config: LoadTestConfig): Promise<LoadTestReport> {
     };
   });
 
-  debugIndicators.attempts = stats.debug.attempts;
+  debugIndicators.attempts = 0;
 
   return {
     name: "magnum-ssh-dash-load-test",
@@ -388,11 +379,6 @@ async function runLoadTest(config: LoadTestConfig): Promise<LoadTestReport> {
       counters.iterationSuccesses++;
       await performOperation("keepAlive", () => client.post(`/api/sessions/${sessionId}/keepalive`));
 
-      const debugResult = await performOperation("debug", () => client.get(`/api/terminal/debug/${sessionId}`));
-      if (debugResult.ok) {
-        const debugPayload = await safeJson<DebugResponse>(debugResult.response);
-        updateDebugIndicators(debugPayload);
-      }
     } catch (error) {
       counters.iterationFailures++;
       console.error(
@@ -450,25 +436,6 @@ async function runLoadTest(config: LoadTestConfig): Promise<LoadTestReport> {
     return "/tmp";
   }
 
-  function updateDebugIndicators(payload?: DebugResponse): void {
-    if (!payload) return;
-    if (payload.hasRuntime === false) {
-      debugIndicators.hasRuntimeFalse++;
-      debugIndicators.runtimeMissing++;
-    }
-    if (payload.hasRuntime === undefined) {
-      debugIndicators.runtimeMissing++;
-    }
-    if (payload.closed) {
-      debugIndicators.closedTrue++;
-    }
-    if (payload.attachedSockets === 0) {
-      debugIndicators.attachedSocketsZero++;
-    }
-    if (payload.lastError) {
-      debugIndicators.lastErrorPresent++;
-    }
-  }
 }
 
 async function main(): Promise<void> {

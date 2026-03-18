@@ -43,7 +43,7 @@ import {
   restoreSessionsFromTmuxPrefix,
   sendInputToSession
 } from "./session-manager.js";
-import { attachTerminalSocket, startTerminalHeartbeat, TerminalErrorCode } from "./terminal-ws.js";
+import { attachTerminalSocket, startTerminalHeartbeat, TerminalErrorCode, TerminalState, getWsTerminalsForSession, type TerminalStateType } from "./terminal-ws.js";
 
 const app = express();
 const serverStartedAt = new Date().toISOString();
@@ -388,12 +388,25 @@ app.get("/api/terminal/status/:sessionId", (req, res) => {
     res.status(404).json({ error: "session_not_found" });
     return;
   }
+
+  // Check if there's an active WebSocket terminal
+  const wsTerminals = getWsTerminalsForSession(session.id);
+  const hasWsTerminal = wsTerminals.length > 0;
+
+  // Determine terminal state
+  let terminalState: TerminalStateType = TerminalState.IDLE;
+  if (hasWsTerminal) {
+    terminalState = TerminalState.ATTACHED_WS;
+  }
+
   res.json({
     sessionId: session.id,
     status: session.status,
     tool: session.tool,
     cwd: session.cwd,
-    createdAt: session.createdAt
+    createdAt: session.createdAt,
+    terminalState, // Unified terminal state
+    hasWsTerminal
   });
 });
 

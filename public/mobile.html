@@ -205,6 +205,7 @@
       let buildMeta = null;
       let agentPresets = [];
       let currentView = "sessions";
+      let preferHttpMode = false; // Default to WebSocket
 
       const el = (id) => document.getElementById(id);
 
@@ -485,7 +486,80 @@
           throw new Error("terminal_not_found");
         } catch (err) {
           if (state.pendingSeqs) state.pendingSeqs.delete(seq);
+          if (allowRetry && shouldReconnectForError(err)) {
+            await reconnectTerminal(state);
+            return sendInputForState(state, data, false);
+          }
           throw err;
+        }
+      };
+
+      // Check if error should trigger reconnect
+      const shouldReconnectForError = (err) => {
+        const message = String(err?.message || err || "");
+        return message.includes("terminal_not_found") || message.includes("terminal_stale");
+      };
+
+      // Reconnect for WebSocket mode
+      const reconnectWsTerminal = async (state) => {
+        if (!state) return;
+        console.log("[mobile] reconnect_ws");
+        if (state.socket) {
+          state.socket.removeAllListeners();
+          state.socket.disconnect();
+          state.socket = null;
+        }
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        state.mode = "";
+        state.http = null;
+        await openSessionTerminal(state.sessionId, state.displayName, {
+          preserveBuffer: true,
+          forceWs: true,
+          reason: "ws_reconnect"
+        });
+      };
+
+      // Reconnect for HTTP mode
+      const reconnectHttpTerminal = async (state) => {
+        if (!state || !state.http?.terminalId) return;
+        console.log("[mobile] reconnect_http");
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        try {
+          await api(`/api/sessions/${state.sessionId}/terminal/http/reconnect`, {
+            method: "POST",
+            body: JSON.stringify({
+              terminalId: state.http.terminalId,
+              cols: term.cols || 120,
+              rows: term.rows || 30
+            })
+          });
+        } catch (err) {
+          console.log("[mobile] reconnect_http fail", err);
+        }
+        state.mode = "";
+        await openSessionTerminal(state.sessionId, state.displayName, {
+          preserveBuffer: true,
+          forceHttp: true,
+          reason: "http_reconnect"
+        });
+      };
+
+      // Unified reconnect
+      const reconnectTerminal = async (state, forceMode = null) => {
+        if (!state) return;
+        const currentMode = forceMode || state.mode;
+        if (currentMode === "ws") {
+          await reconnectWsTerminal(state);
+        } else if (currentMode === "http") {
+          await reconnectHttpTerminal(state);
+        } else {
+          await reconnectWsTerminal(state);
         }
       };
 
@@ -520,6 +594,17 @@
       };
 
       const startWebSocketTerminal = async (sessionId, state) => {
+        // Cleanup old listeners before creating new connection (idempotent)
+        if (state.socket) {
+          state.socket.removeAllListeners();
+          state.socket.disconnect();
+          state.socket = null;
+        }
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+
         const ticket = await api("/api/socket-ticket");
         return await new Promise((resolve, reject) => {
           const socket = io({
@@ -574,6 +659,22 @@
                 return;
               }
               if (activeSessionId === sessionId) term.writeln(`\r\n[error] ${err}`);
+            });
+            // Handle stale event - auto reconnect
+            socket.on("terminal:stale", (payload) => {
+              const reason = payload?.reason || "unknown";
+              console.log("[mobile] ws stale reason=", reason);
+              if (activeSessionId === sessionId) {
+                updateTerminalStatus("stale");
+                state.mode = "stale";
+              }
+              // Auto-reconnect after stale
+              setTimeout(async () => {
+                if (state.mode === "stale") {
+                  console.log("[mobile] auto-reconnecting after stale");
+                  await reconnectWsTerminal(state);
+                }
+              }, 1000);
             });
             socket.on("disconnect", () => {
               if (activeSessionId === sessionId) console.log("ws disconnected");
@@ -707,16 +808,31 @@
           return;
         }
 
-        try {
-          await startWebSocketTerminal(sessionId, state);
-          setupInputBinding(state);
-          updateTerminalStatus(state.mode);
-          term.focus();
-        } catch {
+        const forceHttp = options.forceHttp === true;
+        const forceWs = options.forceWs === true;
+
+        if (forceHttp) {
           await startHttpFallbackTerminal(sessionId, state);
           setupInputBinding(state);
           updateTerminalStatus(state.mode);
-          setTimeout(() => term && term.focus(), 500);
+          setTimeout(() => term && term.focus(), 100);
+        } else if (forceWs || !preferHttpMode) {
+          try {
+            await startWebSocketTerminal(sessionId, state);
+            setupInputBinding(state);
+            updateTerminalStatus(state.mode);
+            term.focus();
+          } catch {
+            await startHttpFallbackTerminal(sessionId, state);
+            setupInputBinding(state);
+            updateTerminalStatus(state.mode);
+            setTimeout(() => term && term.focus(), 500);
+          }
+        } else {
+          await startHttpFallbackTerminal(sessionId, state);
+          setupInputBinding(state);
+          updateTerminalStatus(state.mode);
+          setTimeout(() => term && term.focus(), 100);
         }
         setTimeout(async () => {
           if (!state || state.hadOutput) return;

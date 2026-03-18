@@ -59,12 +59,12 @@ beforeAll(async () => {
     expect(response.body).toEqual({ error: "unauthorized" });
   });
 
-  it("returns 404 for missing terminal debug sessions even when authenticated", async () => {
+  it("returns 404 for missing sessions commands endpoint even when authenticated", async () => {
     const sid = issueLoginSession("admin");
     const cookie = `${appConfig.sessionCookieName}=${encodeURIComponent(sid)}`;
     try {
       const response = await request(app)
-        .get("/api/terminal/debug/nonexistent")
+        .get("/api/sessions/nonexistent/commands")
         .set("Cookie", cookie)
         .expect(404);
       expect(response.body).toEqual({ error: "session_not_found" });

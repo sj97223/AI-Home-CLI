@@ -8,12 +8,26 @@ import {
   sendInputToSession
 } from "./session-manager.js";
 
+// Unified terminal state enum
+export const TerminalState = {
+  IDLE: "idle",
+  CONNECTING: "connecting",
+  ATTACHED_WS: "attached_ws",
+  ATTACHED_HTTP: "attached_http",
+  STALE: "stale",
+  RECONNECTING: "reconnecting",
+  CLOSED: "closed"
+} as const;
+
+export type TerminalStateType = typeof TerminalState[keyof typeof TerminalState];
+
 // Standard error codes
 export const TerminalErrorCode = {
   RUNTIME_NOT_FOUND: "RUNTIME_NOT_FOUND",
   WS_UPGRADE_FAILED: "WS_UPGRADE_FAILED",
   AUTH_COOKIE_MISSING: "AUTH_COOKIE_MISSING",
-  PROXY_WS_BLOCKED: "PROXY_WS_BLOCKED"
+  PROXY_WS_BLOCKED: "PROXY_WS_BLOCKED",
+  TERMINAL_STALE: "TERMINAL_STALE"
 } as const;
 
 export type TerminalErrorCodeType = typeof TerminalErrorCode[keyof typeof TerminalErrorCode];
@@ -37,6 +51,7 @@ export interface WsTerminalConnection {
   terminalId: string;
   attachedAt: number;
   lastInputAt: number | null;
+  lastActivityAt: number; // Track both input and output for timeout
   cols: number;
   rows: number;
 }
@@ -59,9 +74,19 @@ function createWsTerminalRuntime(socket: Socket, sessionId: string): WsTerminalC
     terminalId,
     attachedAt: Date.now(),
     lastInputAt: null,
+    lastActivityAt: Date.now(), // Initialize with attach time
     cols: 80,
     rows: 24
   };
+}
+
+// Cleanup existing terminal for a socket before re-attaching
+function cleanupSocketTerminal(socketId: string): void {
+  const existing = wsTerminals.get(socketId);
+  if (existing) {
+    existing.socket.leave(roomName(existing.sessionId));
+    wsTerminals.delete(socketId);
+  }
 }
 
 export function attachTerminalSocket(io: Server, socket: Socket): void {
@@ -82,13 +107,29 @@ export function attachTerminalSocket(io: Server, socket: Socket): void {
     return;
   }
 
+  // Check for duplicate attach - reject if already connected
+  const existing = wsTerminals.get(socket.id);
+  if (existing && existing.sessionId === sessionId && socket.connected) {
+    socket.emit("terminal:error", {
+      type: "error",
+      message: "duplicate_attach",
+      code: "DUPLICATE_ATTACH"
+    });
+    return;
+  }
+
+  // P0 Fix: Cleanup old terminal before creating new one
+  cleanupSocketTerminal(socket.id);
+
   const runtime = createWsTerminalRuntime(socket, sessionId);
   runtime.cols = cols;
   runtime.rows = rows;
   wsTerminals.set(socket.id, runtime);
 
   socket.join(roomName(sessionId));
-  markWsTerminalsStaleForSession(sessionId, "reconnected");
+
+  // P0 Fix: Only mark OTHER terminals as stale, not self
+  markWsTerminalsStaleForSession(sessionId, "reconnected", socket.id);
 
   // Emit terminal:ready event to client (expected by WebSocket client)
   socket.emit("terminal:ready", {
@@ -122,6 +163,7 @@ export function attachTerminalSocket(io: Server, socket: Socket): void {
     try {
       await sendInputToSession(sessionId, message.data);
       terminal.lastInputAt = Date.now();
+      terminal.lastActivityAt = Date.now(); // Update both for timeout tracking
       void keepAliveSession(sessionId);
     } catch (err) {
       console.error(`[WS] Input error: sessionId=${sessionId}, error=${err}`);
@@ -184,9 +226,10 @@ function cleanupTerminal(socketId: string): void {
   }
 }
 
-function markWsTerminalsStaleForSession(sessionId: string, reason: string): void {
+function markWsTerminalsStaleForSession(sessionId: string, reason: string, excludeSocketId?: string): void {
   for (const terminal of wsTerminals.values()) {
-    if (terminal.sessionId === sessionId && terminal.socket.connected) {
+    // P0 Fix: Exclude self from stale notification
+    if (terminal.sessionId === sessionId && terminal.socket.connected && terminal.socket.id !== excludeSocketId) {
       terminal.socket.emit("terminal:stale", { reason });
     }
   }
@@ -200,9 +243,12 @@ export function broadcastTerminalOutput(io: Server, sessionId: string): void {
   captureSessionOutput(sessionId)
     .then((output) => {
       for (const socketId of sockets) {
+        const terminal = wsTerminals.get(socketId);
         const socket = io.sockets.sockets.get(socketId);
-        if (socket && socket.connected) {
+        if (socket && socket.connected && terminal) {
           socket.emit("terminal:output", { type: "output", data: output });
+          // P1 Fix: Update lastActivityAt when sending output (not just input)
+          terminal.lastActivityAt = Date.now();
         }
       }
     })
@@ -222,8 +268,9 @@ export function startTerminalHeartbeat(io: Server): void {
         continue;
       }
 
-      const timeSinceLastInput = terminal.lastInputAt ? now - terminal.lastInputAt : now - terminal.attachedAt;
-      if (timeSinceLastInput > staleTimeout) {
+      // P1 Fix: Use lastActivityAt instead of lastInputAt to track both input and output
+      const timeSinceLastActivity = terminal.lastActivityAt ? now - terminal.lastActivityAt : now - terminal.attachedAt;
+      if (timeSinceLastActivity > staleTimeout) {
         terminal.socket.emit("terminal:stale", { reason: "timeout" });
         terminal.socket.disconnect(true);
         wsTerminals.delete(socketId);

@@ -1,4 +1,4 @@
-# Magnum SSH Dash v1.10
+# Magnum SSH Dash v1.13.2
 
 基于 Web 的 macOS 本地多会话 CLI/SSH 控制面板。
 
@@ -9,12 +9,14 @@
 - **登录认证**: 用户名/密码认证，基于 Cookie 的会话管理
 - **修改凭据**: 登录后可修改用户名和密码
 - **浏览器终端**: 浏览器内完整终端模拟，支持多会话标签
+- **WebSocket 实时终端**: 低延迟 WebSocket 连接，支持自动重连
+- **命令历史记录**: 使用上/下箭头键导航历史命令
 - **多种 Agent 预设**: 支持 shell、claude、openclaw、codex、gemini 及自定义命令
 - **会话管理**: 创建、重命名、后台挂起、终止会话
 - **自动恢复**: 后端重启后自动从 tmux 恢复会话
 - **文件管理**: 在允许的目录内列出、上传、下载文件
-- **HTTP 长轮询终端**: 通过 HTTP 长轮询实现实时终端（WebSocket 回退）
-- **安全**: Scrypt 密码哈希、HttpOnly Cookie、CSRF 保护
+- **移动端适配**: 触摸友好的界面，支持文件下载、会话重命名、状态指示器
+- **安全增强**: Scrypt 密码哈希、HttpOnly Cookie、CSRF 保护、移除明文密码支持
 
 ## 快速开始
 
