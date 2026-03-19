@@ -19,6 +19,8 @@ All notable changes to this project will be documented in this file.
 - Added src/middleware/error-handler.ts with global error handling
 - Added notFoundHandler middleware
 - Phase 1 complete: server.ts reduced from ~1000 lines to ~720 lines
+- Extracted HTTP terminal to src/services/terminal-http.ts
+- server.ts further reduced to ~650 lines
 
 ### Performance
 - Heartbeat interval increased from 2s to 5s to reduce tmux pressure
