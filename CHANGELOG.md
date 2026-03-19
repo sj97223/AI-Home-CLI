@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.13.3] - 2026-03-19
+
+### Bug Fixes
+- Fixed WS/HTTP mode switch not completing when existing connection present
+- Fixed startHttpFallbackTerminal not cleaning up old WebSocket before starting HTTP
+- Added staleTimer cleanup to startWebSocketTerminal and startHttpFallbackTerminal
+- Fixed openSessionTerminal early return logic that prevented mode switching
+
+### Code Quality
+- Improved mode switching reliability by ensuring cleanup happens before new connection
+
 ## [1.13.2] - 2026-03-18
 
 ### Bug Fixes
