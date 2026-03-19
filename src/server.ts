@@ -58,6 +58,7 @@ import {
 import authRouter from "./routes/auth.js";
 import sessionsRouter from "./routes/sessions.js";
 import filesRouter from "./routes/files.js";
+import { parseStartupArgs, buildSafeSshArgs } from "./utils/ssh-utils.js";
 import optionsRouter from "./routes/options.js";
 import { apiErrorHandler, notFoundHandler } from "./middleware/error-handler.js";
 
@@ -94,11 +95,6 @@ const corsOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((item) => item.trim()).filter(Boolean)
   : false;
 
-const startupTokenSchema = z.string().regex(/^[A-Za-z0-9_./:@%+=,-]+$/);
-const startupCommandSchema = z.string().min(1).max(500);
-const sshUserSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
-const sshHostSchema = z.string().regex(/^[A-Za-z0-9.-]+$/);
-
 // Rate limiting for login attempts
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -120,31 +116,6 @@ function checkLoginRateLimit(ip: string): boolean {
 
   record.count++;
   return true;
-}
-
-function parseStartupArgs(raw: string | undefined): string[] | undefined {
-  const text = raw?.trim();
-  if (!text) return undefined;
-  const safe = startupCommandSchema.parse(text);
-  const tokens = safe.split(/\s+/).filter(Boolean);
-  for (const token of tokens) {
-    startupTokenSchema.parse(token);
-  }
-  return tokens.length ? tokens : undefined;
-}
-
-function buildSafeSshArgs(
-  user: string | undefined,
-  host: string | undefined,
-  port: number | undefined
-): string[] | undefined {
-  if (!user) return undefined;
-  const safeUser = sshUserSchema.parse(user.trim());
-  const safeHost = sshHostSchema.parse((host || "127.0.0.1").trim());
-  const args = ["ssh"];
-  if (port) args.push("-p", String(port));
-  args.push(`${safeUser}@${safeHost}`);
-  return args;
 }
 
 app.use(helmet({
