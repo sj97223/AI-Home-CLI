@@ -140,6 +140,8 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
+      // Note: 'unsafe-inline' is required because the frontend uses inline event handlers
+      // TODO: Migrate to nonce-based CSP by generating nonce per request and adding to scripts
       scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net", "https://cdn.socket.io"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
       imgSrc: ["'self'", "data:", "blob:"],

@@ -280,7 +280,7 @@ export function startTerminalHeartbeat(io: Server): void {
       // Broadcast terminal output periodically
       broadcastTerminalOutput(io, terminal.sessionId);
     }
-  }, 2000).unref();
+  }, 5000).unref(); // Increased from 2s to 5s to reduce tmux pressure
 }
 
 export function getWsTerminalCount(): number {

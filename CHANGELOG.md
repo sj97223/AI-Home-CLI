@@ -20,8 +20,11 @@ All notable changes to this project will be documented in this file.
 - Added notFoundHandler middleware
 - Phase 1 complete: server.ts reduced from ~1000 lines to ~720 lines
 
-### Code Quality
-- Improved module structure and separation of concerns
+### Performance
+- Heartbeat interval increased from 2s to 5s to reduce tmux pressure
+
+### Security
+- Documented CSP unsafe-inline requirement (TODO: add nonce support)
 
 ## [1.13.1] - 2026-03-18
 
