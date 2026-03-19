@@ -44,6 +44,11 @@ import {
   sendInputToSession
 } from "./session-manager.js";
 import { attachTerminalSocket, startTerminalHeartbeat, TerminalErrorCode, TerminalState, getWsTerminalsForSession, type TerminalStateType } from "./terminal-ws.js";
+import authRouter from "./routes/auth.js";
+import sessionsRouter from "./routes/sessions.js";
+import filesRouter from "./routes/files.js";
+import optionsRouter from "./routes/options.js";
+import { apiErrorHandler, notFoundHandler } from "./middleware/error-handler.js";
 
 const app = express();
 const serverStartedAt = new Date().toISOString();
@@ -197,176 +202,11 @@ app.get("/api/meta", (_req, res) => {
   res.json({ version: appVersion, buildId, startedAt: serverStartedAt });
 });
 
-app.post("/api/login", (req, res) => {
-  const clientIp = req.ip || req.socket.remoteAddress || "unknown";
-  if (!checkLoginRateLimit(clientIp)) {
-    res.status(429).json({ error: "too_many_login_attempts", message: "Please try again later" });
-    return;
-  }
+// Use auth routes (includes login, logout, me, admin)
+app.use("/api", authRouter);
 
-  const schema = z.object({
-    username: z.string().min(1),
-    password: z.string().min(1)
-  });
-  try {
-    const parsed = schema.parse(req.body);
-    const result = verifyPassword(parsed.username, parsed.password);
-    if (!result.valid) {
-      res.status(401).json({ error: "invalid_credentials" });
-      return;
-    }
-    const cfEmail = resolveCloudflareIdentity(req);
-    if (appConfig.requireCloudflareAccess && !cfEmail) {
-      res.status(401).json({ error: "cloudflare_access_required" });
-      return;
-    }
-
-    const sid = issueLoginSession(result.username, cfEmail || undefined);
-    setSessionCookie(res, sid);
-    res.json({ ok: true, username: result.username, email: cfEmail || null });
-  } catch (err) {
-    res.status(400).json({ error: "invalid_login_payload", detail: String(err) });
-  }
-});
-
-app.post("/api/logout", (req, res) => {
-  destroyLoginSessionFromRequest(req);
-  clearSessionCookie(res);
-  res.status(204).send();
-});
-
-// User management APIs (admin only)
-app.get("/api/admin/users", authMiddleware, (_req, res) => {
-  const users = listUsers();
-  res.json({ users });
-});
-
-app.post("/api/admin/users", authMiddleware, async (req, res) => {
-  const schema = z.object({
-    username: z.string().min(1),
-    password: z.string().min(1)
-  });
-  try {
-    const parsed = schema.parse(req.body);
-    const passwordHash = hashPassword(parsed.password);
-    if (addUser(parsed.username, passwordHash)) {
-      // Save to users.json
-      const fs = await import("node:fs");
-      const pathModule = await import("node:path");
-      const usersFile = pathModule.join(process.cwd(), "users.json");
-      fs.writeFileSync(usersFile, JSON.stringify(appConfig.users, null, 2));
-      res.json({ ok: true, username: parsed.username });
-    } else {
-      res.status(400).json({ error: "user_already_exists" });
-    }
-  } catch (err) {
-    res.status(400).json({ error: "create_user_failed", detail: String(err) });
-  }
-});
-
-app.delete("/api/admin/users/:username", authMiddleware, async (req, res) => {
-  const username = String(req.params.username);
-  // Prevent deleting the last user
-  if (appConfig.users.length <= 1) {
-    res.status(400).json({ error: "cannot_delete_last_user" });
-    return;
-  }
-  if (removeUser(username)) {
-    // Save to users.json
-    const fs = await import("node:fs");
-    const pathModule = await import("node:path");
-    const usersFile = pathModule.join(process.cwd(), "users.json");
-    fs.writeFileSync(usersFile, JSON.stringify(appConfig.users, null, 2));
-    res.json({ ok: true });
-  } else {
-    res.status(404).json({ error: "user_not_found" });
-  }
-});
-
-// 修改密码
-app.post("/api/admin/change-password", authMiddleware, async (req, res) => {
-  const schema = z.object({
-    newPassword: z.string().min(8, "Password must be at least 8 characters")
-  });
-  try {
-    const parsed = schema.parse(req.body);
-    const session = getLoginSession(req);
-    if (!session) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
-    // Hash the new password
-    const passwordHash = hashPassword(parsed.newPassword);
-    // 写入 credentials.json
-    const fs = await import("node:fs");
-    const pathModule = await import("node:path");
-    const credPath = pathModule.join(process.cwd(), "credentials.json");
-    const cred = { username: session.username, passwordHash: passwordHash };
-    fs.writeFileSync(credPath, JSON.stringify(cred, null, 2));
-    // Reload users from credentials.json
-    reloadUsers();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(400).json({ error: "change_password_failed", detail: String(err) });
-  }
-});
-
-// 修改用户名
-app.post("/api/admin/change-username", authMiddleware, async (req, res) => {
-  const schema = z.object({
-    newUsername: z.string().min(1)
-  });
-  try {
-    const parsed = schema.parse(req.body);
-    // 写入 credentials.json
-    const fs = await import("node:fs");
-    const pathModule = await import("node:path");
-    const credPath = pathModule.join(process.cwd(), "credentials.json");
-    let cred: { username: string; passwordHash?: string } = { username: "admin" };
-    if (existsSync(credPath)) {
-      try {
-        cred = JSON.parse(fs.readFileSync(credPath, "utf8"));
-      } catch {}
-    }
-    // Preserve passwordHash, if not present use existing or hash "admin"
-    if (!cred.passwordHash) {
-      const session = getLoginSession(req);
-      cred.passwordHash = hashPassword(session?.username === cred.username ? "admin" : "admin");
-    }
-    cred.username = parsed.newUsername;
-    fs.writeFileSync(credPath, JSON.stringify(cred, null, 2));
-    // Reload users from credentials.json
-    reloadUsers();
-    res.json({ ok: true, username: parsed.newUsername });
-  } catch (err) {
-    res.status(400).json({ error: "change_username_failed", detail: String(err) });
-  }
-});
-
-app.get("/api/me", (req, res) => {
-  const session = getLoginSession(req);
-  if (!session) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
-  }
-  res.json({ username: session.username, email: session.email || null, expiresAt: session.expiresAt });
-});
-
-app.use("/api", authMiddleware);
-
-app.get("/api/options", (_req, res) => {
-  res.json({
-    allowedRoots: appConfig.allowedRoots,
-    defaultCwd: appConfig.allowedRoots[0] || process.cwd(),
-    agentPresets: [
-      { id: "shell", label: "Shell", command: null },
-      { id: "claude", label: "Claude CLI", command: "claude" },
-      { id: "codex", label: "Codex CLI", command: "codex" },
-      { id: "gemini", label: "Gemini CLI", command: "gemini" },
-      { id: "custom", label: "Custom Command", command: null }
-    ]
-  });
-});
+// Use options route
+app.use("/api/options", optionsRouter);
 
 app.get("/api/socket-ticket", (req, res) => {
   const auth = (req as { auth?: { username?: string } }).auth;
@@ -377,11 +217,10 @@ app.get("/api/socket-ticket", (req, res) => {
   res.json({ ticket: issueSocketTicket(auth.username) });
 });
 
-app.get("/api/sessions", (_req, res) => {
-  res.json({ sessions: listSessions() });
-});
+// Use sessions routes
+app.use("/api/sessions", sessionsRouter);
 
-// Terminal status API
+// Terminal status API (part of sessions but needs wsTerminals)
 app.get("/api/terminal/status/:sessionId", (req, res) => {
   const session = getSession(req.params.sessionId);
   if (!session) {
@@ -389,11 +228,9 @@ app.get("/api/terminal/status/:sessionId", (req, res) => {
     return;
   }
 
-  // Check if there's an active WebSocket terminal
   const wsTerminals = getWsTerminalsForSession(session.id);
   const hasWsTerminal = wsTerminals.length > 0;
 
-  // Determine terminal state
   let terminalState: TerminalStateType = TerminalState.IDLE;
   if (hasWsTerminal) {
     terminalState = TerminalState.ATTACHED_WS;
@@ -405,83 +242,15 @@ app.get("/api/terminal/status/:sessionId", (req, res) => {
     tool: session.tool,
     cwd: session.cwd,
     createdAt: session.createdAt,
-    terminalState, // Unified terminal state
+    terminalState,
     hasWsTerminal
   });
 });
 
-app.post("/api/sessions", async (req, res) => {
-  const schema = z.object({
-    displayName: z.string().optional(),
-    cwd: z.string().min(1),
-    tool: z.enum(["shell", "claude", "openclaw", "codex", "gemini"]).optional(),
-    startupCommand: z.string().max(500).optional(),
-    sshMode: z.enum(["auto", "manual"]).optional(),
-    sshUser: z.string().optional(),
-    sshHost: z.string().optional(),
-    sshPort: z.coerce.number().int().positive().max(65535).optional()
-  });
-  try {
-    const parsed = schema.parse(req.body);
-    const safeCwd = await ensureSafeDirectory(parsed.cwd);
-    const sshUser = parsed.sshUser?.trim();
-    const sshHost = parsed.sshHost?.trim() || "127.0.0.1";
-    const sshPort = parsed.sshPort;
-    const sshMode = parsed.sshMode || (sshUser ? "auto" : "manual");
-    const startupFromInput = parseStartupArgs(parsed.startupCommand);
-    const tool = parsed.tool || "shell";
-    // For SSH auto mode, build the command as a single string (not array)
-    let startupArgs = startupFromInput;
-    if (sshMode === "auto" && sshUser) {
-      const sshArgs = buildSafeSshArgs(sshUser, sshHost, sshPort);
-      if (sshArgs) {
-        // Join as a single command string for tmux send-keys
-        startupArgs = [sshArgs.join(" ")];
-      }
-    }
+// HTTP terminal routes will be refactored in next phase
 
-    const created = await createSession({
-      displayName: parsed.displayName,
-      tool,
-      cwd: safeCwd,
-      startupArgs,
-      sshUser,
-      sshHost,
-      sshPort
-    });
-    res.status(201).json(created);
-  } catch (err) {
-    res.status(400).json({ error: "invalid_session_payload", detail: String(err) });
-  }
-});
-
-app.patch("/api/sessions/:id", async (req, res) => {
-  const schema = z.object({
-    displayName: z.string().min(1).optional(),
-    tool: z.enum(["shell", "claude", "openclaw", "codex", "gemini"]).optional(),
-    sshUser: z.string().optional(),
-    sshHost: z.string().optional(),
-    sshPort: z.coerce.number().int().positive().max(65535).optional()
-  });
-  try {
-    const parsed = schema.parse(req.body);
-    const updated = await renameSession(
-      req.params.id,
-      parsed.displayName,
-      parsed.tool,
-      parsed.sshUser,
-      parsed.sshHost,
-      parsed.sshPort
-    );
-    if (!updated) {
-      res.status(404).json({ error: "session_not_found" });
-      return;
-    }
-    res.json(updated);
-  } catch (err) {
-    res.status(400).json({ error: "invalid_patch_payload", detail: String(err) });
-  }
-});
+// Use files routes
+app.use("/api/files", filesRouter);
 
 app.post("/api/sessions/:id/keepalive", async (req, res) => {
   const session = await keepAliveSession(req.params.id);
@@ -938,7 +707,7 @@ function markSessionTerminalsStale(sessionId: string, reason: string): void {
   }
 }
 
-function touchHttpTerminalsForSession(sessionId: string): void {
+export function touchHttpTerminalsForSession(sessionId: string): void {
   const now = Date.now();
   for (const terminal of httpTerminals.values()) {
     if (terminal.sessionId !== sessionId || terminal.closed || terminal.stale) continue;
@@ -962,6 +731,10 @@ setInterval(() => {
     }
   }
 }, 30_000).unref();
+
+// Error handling middleware (must be after all routes)
+app.use(notFoundHandler);
+app.use(apiErrorHandler);
 
 async function bootstrap(): Promise<void> {
   await restoreSessionsFromTmuxPrefix();
