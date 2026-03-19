@@ -10,7 +10,7 @@ import {
 } from "../session-manager.js";
 import { ensureSafeDirectory } from "../file-policy.js";
 import { getWsTerminalsForSession, TerminalState, type TerminalStateType } from "../terminal-ws.js";
-import { touchHttpTerminalsForSession } from "../server.js"; // Will be refactored
+import { touchHttpTerminalsForSession } from "../services/terminal-http.js";
 
 declare function parseStartupArgs(cmd: string | undefined): string[];
 declare function buildSafeSshArgs(user?: string, host?: string, port?: number): string[] | null;

@@ -5,7 +5,6 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import multer from "multer";
 import helmet from "helmet";
 import cors from "cors";
@@ -44,6 +43,18 @@ import {
   sendInputToSession
 } from "./session-manager.js";
 import { attachTerminalSocket, startTerminalHeartbeat, TerminalErrorCode, TerminalState, getWsTerminalsForSession, type TerminalStateType } from "./terminal-ws.js";
+import {
+  createHttpTerminalRuntime,
+  getHttpTerminal,
+  setHttpTerminal,
+  deleteHttpTerminal,
+  markTerminalStale,
+  markSessionTerminalsStale,
+  touchHttpTerminalsForSession,
+  cleanupStaleTerminals,
+  type HttpTerminal,
+  type HttpTerminalEvent
+} from "./services/terminal-http.js";
 import authRouter from "./routes/auth.js";
 import sessionsRouter from "./routes/sessions.js";
 import filesRouter from "./routes/files.js";
@@ -310,7 +321,7 @@ app.post("/api/sessions/:id/terminal/http/start", async (req, res) => {
     }
     markSessionTerminalsStale(session.id, "restarted");
     const runtime = createHttpTerminalRuntime(session.id);
-    httpTerminals.set(runtime.terminalId, runtime);
+    setHttpTerminal(runtime.terminalId, runtime);
     res.status(201).json({
       terminalId: runtime.terminalId,
       cursor: runtime.nextCursor,
@@ -350,7 +361,7 @@ app.post("/api/sessions/:id/terminal/http/reconnect", async (req, res) => {
     }
     const parsed = schema.parse(req.body || {});
     if (parsed.terminalId) {
-      const existing = httpTerminals.get(parsed.terminalId);
+      const existing = getHttpTerminal(parsed.terminalId);
       if (!existing || existing.sessionId !== session.id) {
         res.status(404).json({ error: "terminal_not_found" });
         return;
@@ -363,7 +374,7 @@ app.post("/api/sessions/:id/terminal/http/reconnect", async (req, res) => {
       await resizeSession(session.id, parsed.cols, parsed.rows);
     }
     const runtime = createHttpTerminalRuntime(session.id);
-    httpTerminals.set(runtime.terminalId, runtime);
+    setHttpTerminal(runtime.terminalId, runtime);
     res.status(200).json({
       terminalId: runtime.terminalId,
       cursor: runtime.nextCursor,
@@ -392,7 +403,7 @@ app.get("/api/sessions/:id/terminal/http/poll", async (req, res) => {
       terminalId: req.query.terminalId,
       cursor: req.query.cursor
     });
-    const terminal = httpTerminals.get(parsed.terminalId);
+    const terminal = getHttpTerminal(parsed.terminalId);
     if (!terminal || terminal.sessionId !== req.params.id) {
       res.status(404).json({ error: "terminal_not_found" });
       return;
@@ -452,7 +463,7 @@ app.post("/api/sessions/:id/terminal/http/input", async (req, res) => {
   });
   try {
     const parsed = schema.parse(req.body || {});
-    const terminal = httpTerminals.get(parsed.terminalId);
+    const terminal = getHttpTerminal(parsed.terminalId);
     if (!terminal || terminal.sessionId !== req.params.id) {
       res.status(404).json({ error: "terminal_not_found" });
       return;
@@ -516,7 +527,7 @@ app.post("/api/sessions/:id/terminal/http/resize", async (req, res) => {
   });
   try {
     const parsed = schema.parse(req.body || {});
-    const terminal = httpTerminals.get(parsed.terminalId);
+    const terminal = getHttpTerminal(parsed.terminalId);
     if (!terminal || terminal.sessionId !== req.params.id) {
       res.status(404).json({ error: "terminal_not_found" });
       return;
@@ -547,7 +558,7 @@ app.post("/api/sessions/:id/terminal/http/stop", (req, res) => {
   const schema = z.object({ terminalId: z.string().min(1) });
   try {
     const parsed = schema.parse(req.body || {});
-    const terminal = httpTerminals.get(parsed.terminalId);
+    const terminal = getHttpTerminal(parsed.terminalId);
     if (!terminal || terminal.sessionId !== req.params.id) {
       res.status(404).json({ error: "terminal_not_found" });
       return;
@@ -557,7 +568,7 @@ app.post("/api/sessions/:id/terminal/http/stop", (req, res) => {
       return;
     }
     terminal.closed = true;
-    httpTerminals.delete(parsed.terminalId);
+    deleteHttpTerminal(parsed.terminalId);
     res.status(204).send();
   } catch (err) {
     res.status(400).json({ error: "invalid_payload", detail: String(err) });
@@ -653,70 +664,6 @@ io.on("connection", (socket) => {
   });
 });
 
-interface HttpTerminalEvent {
-  cursor: number;
-  type: "output";
-  data: string;
-  createdAt: string;
-}
-
-interface HttpTerminal {
-  terminalId: string;
-  sessionId: string;
-  lastSnapshot: string;
-  closed: boolean;
-  stale: boolean;
-  staleReason: string | null;
-  updatedAt: number;
-  lastInputAt: number | null;
-  lastError: string | null;
-  nextExpectedSeq: number;
-  acceptedInputs: Map<number, string>;
-  nextCursor: number;
-  events: HttpTerminalEvent[];
-}
-
-const httpTerminals = new Map<string, HttpTerminal>();
-
-function createHttpTerminalRuntime(sessionId: string): HttpTerminal {
-  return {
-    terminalId: randomUUID().slice(0, 12),
-    sessionId,
-    lastSnapshot: "",
-    closed: false,
-    stale: false,
-    staleReason: null,
-    updatedAt: Date.now(),
-    lastInputAt: null,
-    lastError: null,
-    nextExpectedSeq: 1,
-    acceptedInputs: new Map<number, string>(),
-    nextCursor: 0,
-    events: []
-  };
-}
-
-function markTerminalStale(terminal: HttpTerminal, reason: string): void {
-  terminal.stale = true;
-  terminal.staleReason = reason;
-  terminal.updatedAt = Date.now();
-}
-
-function markSessionTerminalsStale(sessionId: string, reason: string): void {
-  for (const terminal of httpTerminals.values()) {
-    if (terminal.sessionId !== sessionId || terminal.closed || terminal.stale) continue;
-    markTerminalStale(terminal, reason);
-  }
-}
-
-export function touchHttpTerminalsForSession(sessionId: string): void {
-  const now = Date.now();
-  for (const terminal of httpTerminals.values()) {
-    if (terminal.sessionId !== sessionId || terminal.closed || terminal.stale) continue;
-    terminal.updatedAt = now;
-  }
-}
-
 function isSessionNotFoundError(err: unknown): boolean {
   return err instanceof Error && err.message === "session_not_found";
 }
@@ -726,12 +673,7 @@ function isZodError(err: unknown): err is z.ZodError {
 }
 
 setInterval(() => {
-  const now = Date.now();
-  for (const [terminalId, terminal] of httpTerminals.entries()) {
-    if (terminal.closed || now - terminal.updatedAt > 5 * 60 * 1000) {
-      httpTerminals.delete(terminalId);
-    }
-  }
+  cleanupStaleTerminals();
 }, 30_000).unref();
 
 // Error handling middleware (must be after all routes)

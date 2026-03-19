@@ -5,15 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Magnum SSH Dash</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      // Theme and language initialization
-      (function() {
-        const savedTheme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.dataset.theme = savedTheme;
-        const savedLang = localStorage.getItem('lang') || 'zh';
-        document.documentElement.lang = savedLang;
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css" />
     <style>
       /* CSS Variables for theming */
