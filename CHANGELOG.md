@@ -14,6 +14,15 @@ All notable changes to this project will be documented in this file.
 ### Features
 - Added manual WS/HTTP mode switching buttons
 
+### Architecture Refactoring
+- Extracted routes to src/routes/ directory (auth, sessions, files, options)
+- Added src/middleware/error-handler.ts with global error handling
+- Added notFoundHandler middleware
+- Phase 1 complete: server.ts reduced from ~1000 lines to ~720 lines
+
+### Code Quality
+- Improved module structure and separation of concerns
+
 ## [1.13.1] - 2026-03-18
 
 ### Bug Fixes
