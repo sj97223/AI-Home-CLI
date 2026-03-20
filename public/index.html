@@ -1192,6 +1192,10 @@
           clearTimeout(state.staleTimer);
           state.staleTimer = null;
         }
+        // Clean up HTTP state when switching to WS
+        if (state.http) {
+          state.http = null;
+        }
 
         const ticket = await api("/api/socket-ticket");
         pushSocketEvent(`ws: starting connection for session ${sessionId}`);
@@ -1351,6 +1355,10 @@
         if (state.staleTimer) {
           clearTimeout(state.staleTimer);
           state.staleTimer = null;
+        }
+        // Clean up any stale HTTP state before creating new one
+        if (state.http) {
+          state.http = null;
         }
         const created = await api(`/api/sessions/${sessionId}/terminal/http/start`, {
           method: "POST",
@@ -1527,7 +1535,23 @@
         updateStatus(document.documentElement.lang === 'zh' ? '连接中...' : 'Connecting...');
 
         const forceHttp = options.forceHttp === true;
-        if (preferHttpMode || forceHttp) {
+        const forceWs = options.forceWs === true;
+        // Force WS takes precedence over forceHttp
+        if (forceWs) {
+          try {
+            await startWebSocketTerminal(sessionId, state);
+            setupInputBinding(state);
+            state.reconnecting = false;
+            updateStatus("ws " + (document.documentElement.lang === 'zh' ? '已连接，可输入' : 'WS Connected - ready'));
+            term.focus();
+          } catch {
+            await startHttpFallbackTerminal(sessionId, state);
+            setupInputBinding(state);
+            state.reconnecting = false;
+            updateStatus("ws " + (document.documentElement.lang === 'zh' ? '失败，已切换 HTTP 回退' : 'WS Failed, HTTP fallback'));
+            setTimeout(() => term && term.focus(), 500);
+          }
+        } else if (preferHttpMode || forceHttp) {
           await startHttpFallbackTerminal(sessionId, state);
           setupInputBinding(state);
           // Clear reconnecting flag
